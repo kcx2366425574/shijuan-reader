@@ -19,14 +19,14 @@ export const APP_META = {
   slogan: '把喜欢的书，收进一卷里',
   update: {
     provider: ENV.VITE_UPDATE_PROVIDER || 'github',
-    repo: ENV.VITE_UPDATE_REPO || '',
+    repo: ENV.VITE_UPDATE_REPO || 'kcx2366425574/shijuan-reader',
     manifestUrl: ENV.VITE_UPDATE_MANIFEST || '',
     releasePage: '',
     autoCheck: true
   },
   sourceRepo: {
     provider: ENV.VITE_SOURCE_REPO_PROVIDER || 'github',
-    repo: ENV.VITE_SOURCE_REPO || '',
+    repo: ENV.VITE_SOURCE_REPO || 'kcx2366425574/shijuan-sources',
     branch: ENV.VITE_SOURCE_REPO_BRANCH || 'main',
     manifestUrl: ENV.VITE_SOURCE_REPO_MANIFEST || '',
     autoSync: true
