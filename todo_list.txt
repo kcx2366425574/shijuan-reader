@@ -132,7 +132,7 @@
 其他
 [ ] 32. 本地 TXT/EPUB 导入
 [ ] 33. 阅读时长与连续阅读天数统计（纯本地）
-[ ] 34. 清理死配置：settings 中的 coverQuality、autoAddShelf 无消费方
+[x] 34. 清理死配置：settings 中的 coverQuality、autoAddShelf 无消费方
 
 ====================================================================
 四、书源仓库（D:\code\shijuan-sources）

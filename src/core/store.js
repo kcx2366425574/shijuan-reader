@@ -27,8 +27,6 @@ const DEFAULT_SETTINGS = {
   autoNext: false,
   keepScreenOn: true,
   searchConcurrency: 3,
-  coverQuality: 'normal',
-  autoAddShelf: true,
   autoCheckUpdate: true,
   updateProvider: '',
   updateRepo: '',
