@@ -97,6 +97,31 @@ function builtinSource(source) {
   return normalized
 }
 
+function sourceFingerprint(source) {
+  const url = String((source && source.url) || '').trim().toLowerCase().replace(/\/+$/, '')
+  const name = String((source && source.name) || '').trim().toLowerCase()
+  return url + '|' + name
+}
+
+function dedupeSourceList(list) {
+  const map = new Map()
+  for (const source of list || []) {
+    const key = sourceFingerprint(source)
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, source)
+      continue
+    }
+    const preferred = (!existing.builtin && source.builtin) || (!existing.fromRepo && source.fromRepo) ? source : existing
+    map.set(key, {
+      ...preferred,
+      enabled: existing.enabled !== false || source.enabled !== false,
+      userModified: existing.userModified === true || source.userModified === true
+    })
+  }
+  return Array.from(map.values())
+}
+
 export function loadSources() {
   const sources = readJson(KEYS.SOURCES, [])
   return Array.isArray(sources) ? sources : []
@@ -114,8 +139,10 @@ export function ensureSources() {
   const storedVersion = Number(readJson(KEYS.BUILTIN_VERSION, 0)) || 0
   const deleted = readJson(KEYS.DELETED_BUILTINS, [])
   const deletedSet = new Set(Array.isArray(deleted) ? deleted : [])
-  const map = new Map(loadSources().map((source) => [source.id, source]))
-  let changed = false
+  const existingList = loadSources()
+  const deduped = dedupeSourceList(existingList)
+  let changed = deduped.length !== existingList.length
+  const map = new Map(deduped.map((source) => [source.id, source]))
   const needsUpgrade = seeded && storedVersion < BUILTIN_CONFIG_VERSION
 
   for (const builtin of cloneBuiltinSources()) {
@@ -152,9 +179,30 @@ export function ensureSources() {
 export function addSources(incoming) {
   const sources = loadSources()
   const map = new Map(sources.map((item) => [item.id, item]))
+  const byFingerprint = new Map(sources.map((item) => [sourceFingerprint(item), item]))
   for (const source of incoming || []) {
     if (!source || !source.id) continue
+    if (map.has(source.id)) {
+      map.set(source.id, source)
+      byFingerprint.set(sourceFingerprint(source), source)
+      continue
+    }
+    const fingerprint = sourceFingerprint(source)
+    const duplicate = byFingerprint.get(fingerprint)
+    if (duplicate) {
+      const merged = {
+        ...source,
+        id: duplicate.id,
+        enabled: duplicate.enabled !== false,
+        builtin: duplicate.builtin === true,
+        userModified: duplicate.userModified === true || source.userModified === true
+      }
+      map.set(duplicate.id, merged)
+      byFingerprint.set(fingerprint, merged)
+      continue
+    }
     map.set(source.id, source)
+    byFingerprint.set(fingerprint, source)
   }
   const result = Array.from(map.values())
   saveSources(result)

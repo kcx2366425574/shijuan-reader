@@ -130,3 +130,18 @@ test('清空本地数据', () => {
   assert.equal(loadShelf().length, 0)
   assert.equal(loadSearchHistory().length, 0)
 })
+
+test('书源按地址与名称去重', () => {
+  __resetMemoryStorage()
+  ensureSources()
+  const before = loadSources().length
+  addSources([
+    { id: 'dup-1', name: '重复源', url: 'https://dup.example.com', enabled: true },
+    { id: 'dup-2', name: '重复源', url: 'https://dup.example.com/', enabled: false }
+  ])
+  const sources = loadSources()
+  assert.equal(sources.length, before + 1)
+  const dup = sources.filter((source) => source.url.indexOf('dup.example.com') !== -1)
+  assert.equal(dup.length, 1)
+  assert.equal(dup[0].id, 'dup-1')
+})

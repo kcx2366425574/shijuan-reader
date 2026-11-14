@@ -58,6 +58,7 @@
         <text class="error-text">{{ error }}</text>
         <view class="error-actions">
           <view class="ghost-btn small-btn" @tap="goBack">返回</view>
+          <view v-if="info.name && (alternateOffers.length || sources.length > 1)" class="ghost-btn small-btn" @tap="switchSource">换源</view>
           <view class="primary-btn small-btn" @tap="refresh">再试一次</view>
         </view>
       </view>
@@ -227,6 +228,7 @@ const switching = ref(false)
 const currentBookId = ref('')
 const currentBookUrl = ref('')
 const currentTocUrl = ref('')
+const alternateOffers = ref([])
 const offlineMeta = ref(null)
 const downloading = ref(false)
 const downloadPercent = ref(0)
@@ -330,6 +332,9 @@ function applyOpened(opened) {
   refreshOfflineMeta()
   if (shelfBook.value) {
     shelfBook.value = updateShelfBook(shelfBook.value.id, {
+      sourceId: source.value ? source.value.id : (shelfBook.value.sourceId || ''),
+      sourceName: source.value ? source.value.name : (shelfBook.value.sourceName || ''),
+      sourceUrl: source.value ? source.value.url : (shelfBook.value.sourceUrl || ''),
       name: info.value.name,
       author: info.value.author,
       coverUrl: info.value.coverUrl,
@@ -366,6 +371,27 @@ function applyOfflineBook(offline) {
   })
   loading.value = false
   refreshOfflineMeta()
+}
+
+async function tryAlternateSource() {
+  const currentSourceId = source.value ? source.value.id : ''
+  const candidates = alternateOffers.value.filter((item) => item.sourceId && item.sourceId !== currentSourceId)
+  for (const alt of candidates) {
+    const altSource = sources.value.find((item) => item.id === alt.sourceId && item.enabled !== false)
+    if (!altSource) continue
+    try {
+      const opened = await openBook(altSource, alt.bookUrl, alt)
+      source.value = altSource
+      currentBookUrl.value = opened.bookUrl || alt.bookUrl
+      alternateOffers.value = candidates.filter((item) => item !== alt)
+      applyOpened(opened)
+      toast('当前书源不可用，已自动切换')
+      return true
+    } catch (e) {
+      // 尝试下一个备选
+    }
+  }
+  return false
 }
 
 async function load(force = false) {
@@ -418,6 +444,7 @@ async function load(force = false) {
 
   currentBookId.value = bookId
   currentBookUrl.value = bookUrl
+  alternateOffers.value = Array.isArray(fallback.alternates) ? fallback.alternates : []
   const offlineBook = bookId ? await getOfflineBook(bookId) : null
   info.value = {
     ...fallback,
@@ -455,9 +482,12 @@ async function load(force = false) {
       applyOfflineBook(offlineBook)
       toast('网络不可用，已使用离线缓存')
     } else {
-      error.value = e && e.message ? e.message : '加载失败'
-      if (!chapters.value.length) {
-        chapters.value = []
+      const switched = await tryAlternateSource()
+      if (!switched) {
+        error.value = e && e.message ? e.message : '加载失败'
+        if (!chapters.value.length) {
+          chapters.value = []
+        }
       }
     }
   } finally {

@@ -84,7 +84,7 @@
             :src="group.coverUrl"
             :title="group.name"
             :author="group.author"
-            :referer="group.offers[0] && group.offers[0].sourceUrl"
+            :referer="primaryOffer(group) && primaryOffer(group).sourceUrl"
             radius="8rpx"
             shadow
           />
@@ -99,10 +99,10 @@
           <text class="result-intro clamp-2">{{ group.intro || '暂无简介，点开看看吧。' }}</text>
           <view class="result-bottom">
             <view class="source-tags">
-              <text v-for="offer in group.offers.slice(0, 3)" :key="offer.sourceId" class="source-tag">{{ offer.sourceName }}</text>
-              <text v-if="group.offers.length > 3" class="source-tag">+{{ group.offers.length - 3 }}</text>
+              <text class="source-tag">{{ primaryOffer(group).sourceName }}</text>
+              <text v-if="group.offers.length > 1" class="source-more">+{{ group.offers.length - 1 }} 个备选</text>
             </view>
-            <text v-if="group.offers[0].lastChapter" class="result-latest ellipsis">{{ group.offers[0].lastChapter }}</text>
+            <text v-if="primaryOffer(group).lastChapter" class="result-latest ellipsis">{{ primaryOffer(group).lastChapter }}</text>
           </view>
         </view>
         <view class="result-arrow">›</view>
@@ -227,7 +227,7 @@ import {
   clearSearchHistory,
   loadSettings
 } from '../../core/store.js'
-import { searchAllSources, groupSearchResults } from '../../core/service.js'
+import { searchAllSources, groupSearchResults, pickPrimaryOffer } from '../../core/service.js'
 import { setHandoff } from '../../core/handoff.js'
 import { toast } from '../../utils/format.js'
 
@@ -439,18 +439,12 @@ function stopWaiting() {
 }
 
 function openGroup(group) {
-  if (!group.offers.length) return
-  if (group.offers.length === 1) {
-    openOffer(group.offers[0], group)
-    return
-  }
-  uni.showActionSheet({
-    itemList: group.offers.slice(0, 8).map((offer) => offer.sourceName),
-    success(res) {
-      const offer = group.offers[res.tapIndex]
-      if (offer) openOffer(offer, group)
-    }
-  })
+  const primary = pickPrimaryOffer(group)
+  if (primary) openOffer(primary, group)
+}
+
+function primaryOffer(group) {
+  return pickPrimaryOffer(group) || { sourceName: '', sourceUrl: '', lastChapter: '' }
 }
 
 function openOffer(offer, group) {
@@ -462,7 +456,16 @@ function openOffer(offer, group) {
     kind: offer.kind || group.kind || '',
     lastChapter: offer.lastChapter || group.lastChapter || '',
     sourceId: offer.sourceId,
-    sourceName: offer.sourceName
+    sourceName: offer.sourceName,
+    alternates: group.offers
+      .filter((item) => item.bookUrl !== offer.bookUrl || item.sourceId !== offer.sourceId)
+      .map((item) => ({
+        ...item,
+        name: item.name || group.name,
+        author: item.author || group.author,
+        coverUrl: item.coverUrl || group.coverUrl,
+        intro: item.intro || group.intro
+      }))
   }
   const key = offer.sourceId + '|' + offer.bookUrl
   setHandoff(key, fallback)
@@ -1182,5 +1185,11 @@ onShow(load)
 .status-chip.skipped .status-indicator {
   background: var(--muted);
   opacity: 0.45;
+}
+
+.source-more {
+  font-size: 18rpx;
+  color: var(--muted);
+  margin-left: 4rpx;
 }
 </style>

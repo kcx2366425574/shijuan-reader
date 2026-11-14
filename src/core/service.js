@@ -854,8 +854,19 @@ function normalizeBookKey(name, author) {
     String(author || '').replace(/[\s\-—_·:：]/g, '').toLowerCase()
 }
 
+function offerScore(offer) {
+  let score = 0
+  if (offer.author) score += 2
+  if (offer.coverUrl) score += 2
+  if (offer.intro) score += 1
+  if (offer.lastChapter) score += 1
+  if (offer.sourceMode === 'crawl-index') score -= 1
+  return score
+}
+
 /**
- * 聚合多个书源的搜索结果，按“书名 + 作者”去重。
+ * 聚合多个书源的搜索结果，按“书名 + 作者”分组，同组内按来源质量排序。
+ * 默认直接使用质量最高的来源；其余来源保留作自动/手动换源备选。
  */
 export function groupSearchResults(items) {
   const groups = new Map()
@@ -871,14 +882,19 @@ export function groupSearchResults(items) {
           intro: result.intro,
           kind: result.kind,
           lastChapter: result.lastChapter,
-          offers: []
+          offers: [],
+          offerKeys: new Set()
         })
       }
       const group = groups.get(key)
+      const offerKey = (result.sourceId || item.source.id) + '|' + result.bookUrl
+      if (group.offerKeys.has(offerKey)) continue
+      group.offerKeys.add(offerKey)
       group.offers.push({
         ...result,
         sourceId: result.sourceId || item.source.id,
-        sourceName: result.sourceName || item.source.name
+        sourceName: result.sourceName || item.source.name,
+        sourceMode: item.source.searchMode || ''
       })
       if (!group.coverUrl && result.coverUrl) group.coverUrl = result.coverUrl
       if (!group.intro && result.intro) group.intro = result.intro
@@ -886,5 +902,21 @@ export function groupSearchResults(items) {
       if (!group.lastChapter && result.lastChapter) group.lastChapter = result.lastChapter
     }
   }
-  return Array.from(groups.values())
+  const list = Array.from(groups.values())
+  for (const group of list) {
+    group.offers.sort((a, b) => offerScore(b) - offerScore(a))
+    delete group.offerKeys
+    const primary = group.offers[0]
+    if (primary) {
+      group.coverUrl = group.coverUrl || primary.coverUrl || ''
+      group.intro = group.intro || primary.intro || ''
+      group.kind = group.kind || primary.kind || ''
+      group.lastChapter = group.lastChapter || primary.lastChapter || ''
+    }
+  }
+  return list
+}
+
+export function pickPrimaryOffer(group) {
+  return group && group.offers && group.offers.length ? group.offers[0] : null
 }
