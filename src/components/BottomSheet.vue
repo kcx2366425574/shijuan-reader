@@ -7,7 +7,7 @@
         <text class="bs-title serif">{{ title }}</text>
         <view v-if="closable" class="bs-close" @tap="close" hover-class="press">×</view>
       </view>
-      <scroll-view class="bs-body" scroll-y :show-scrollbar="false">
+      <scroll-view class="bs-body" scroll-y :show-scrollbar="false" :scroll-into-view="scrollIntoView">
         <slot />
       </scroll-view>
     </view>
@@ -18,7 +18,8 @@
 const props = defineProps({
   show: { type: Boolean, default: false },
   title: { type: String, default: '' },
-  closable: { type: Boolean, default: true }
+  closable: { type: Boolean, default: true },
+  scrollIntoView: { type: String, default: '' }
 })
 const emit = defineEmits(['update:show', 'close'])
 

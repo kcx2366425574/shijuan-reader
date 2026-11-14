@@ -134,7 +134,7 @@
       </view>
     </template>
 
-    <BottomSheet v-model:show="showCatalog" title="章节目录">
+    <BottomSheet v-model:show="showCatalog" title="章节目录" :scroll-into-view="catalogScrollIntoView">
       <view class="catalog-tools">
         <text class="catalog-range">{{ catalogRangeText }}</text>
         <view class="catalog-jump">
@@ -153,8 +153,9 @@
         <view
           v-for="chapter in catalogItems"
           :key="chapter.url"
+          :id="'catalog-row-' + chapter.index"
           class="catalog-row"
-          :class="{ current: chapter.index === currentIndex }"
+          :class="{ current: chapter.index === currentIndex, target: chapter.index === catalogTargetIndex }"
           hover-class="press"
           @tap="selectCatalogChapter(chapter.index)"
         >
@@ -316,6 +317,8 @@ const showToolbar = ref(true)
 const showCatalog = ref(false)
 const showSettings = ref(false)
 const catalogPage = ref(0)
+const catalogTargetIndex = ref(-1)
+const catalogScrollIntoView = ref('')
 const catalogJump = ref('')
 const scrollTopValue = ref(0)
 const trackedScrollTop = ref(0)
@@ -686,8 +689,15 @@ function openCatalog() {
   if (!chapters.value.length) return
   catalogPage.value = Math.floor(currentIndex.value / PAGE_SIZE)
   catalogJump.value = ''
+  catalogTargetIndex.value = currentIndex.value
+  catalogScrollIntoView.value = ''
   showCatalog.value = true
   showToolbar.value = false
+  nextTick(() => {
+    setTimeout(() => {
+      catalogScrollIntoView.value = 'catalog-row-' + currentIndex.value
+    }, 80)
+  })
 }
 
 function changeCatalogPage(delta) {
@@ -704,8 +714,15 @@ function jumpToChapter() {
   }
   const index = Math.min(chapters.value.length, value) - 1
   catalogPage.value = Math.floor(index / PAGE_SIZE)
+  catalogTargetIndex.value = index
   catalogJump.value = ''
-  toast(`已定位到第 ${index + 1} 章`)
+  catalogScrollIntoView.value = ''
+  nextTick(() => {
+    setTimeout(() => {
+      catalogScrollIntoView.value = 'catalog-row-' + index
+    }, 80)
+  })
+  toast(`已定位到第 ${index + 1} 章，点击条目开始阅读`)
 }
 
 function selectCatalogChapter(index) {
@@ -1552,5 +1569,12 @@ onBeforeUnmount(() => {
 
 .settings-bottom-space {
   height: 20rpx;
+}
+
+.catalog-row.target {
+  background: rgba(176, 138, 82, 0.16);
+  margin: 0 -12rpx;
+  padding: 0 12rpx;
+  border-radius: 12rpx;
 }
 </style>
