@@ -16,7 +16,7 @@ import {
   autoDetectSource
 } from '../src/core/autodetect.js'
 import { parseHTML } from '../src/core/html.js'
-import { clearHttpCache, searchSource } from '../src/core/service.js'
+import { clearHttpCache, searchSource, dedupeIndexResults } from '../src/core/service.js'
 
 test('在线升级：版本比较与 versionCode', () => {
   assert.equal(compareVersions('1.0.0', '1.0.1'), -1)
@@ -255,4 +255,24 @@ test('分类索引搜索：抓取分类页、按书名匹配并缓存', async ()
     globalThis.fetch = originalFetch
     clearHttpCache()
   }
+})
+
+
+test('分类索引结果按书籍身份去重', () => {
+  const base = {
+    author: '天蚕土豆',
+    lastChapter: '第209章 丢失第二席',
+    intro: '世间生灵，体生异骨，可铭刻承载诸多灵妙之法。',
+    coverUrl: 'https://x/c.jpg'
+  }
+  const input = [
+    { ...base, name: '神通者精校版', bookUrl: 'https://x/3' },
+    { ...base, name: '神通者', bookUrl: 'https://x/1' },
+    { ...base, name: '神通者天蚕土豆更新', bookUrl: 'https://x/2' },
+    { ...base, name: '另一本', author: '另一位', lastChapter: '第1章', intro: '完全不同的简介', bookUrl: 'https://x/4' }
+  ]
+  const result = dedupeIndexResults(input, '神通者')
+  assert.equal(result.length, 2)
+  assert.equal(result[0].name, '神通者')
+  assert.equal(result[0].bookUrl, 'https://x/1')
 })

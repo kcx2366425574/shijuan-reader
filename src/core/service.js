@@ -393,7 +393,7 @@ function buildCrawlIndexUrls(source, base) {
 async function enrichIndexItems(source, items, options = {}) {
   if (!source.ruleBookInfo || !Object.keys(source.ruleBookInfo).length) return
   if (options.enrich === false) return
-  const targets = items.filter((item) => item.bookUrl && !item._enriched).slice(0, 12)
+  const targets = items.filter((item) => item.bookUrl && !item._enriched).slice(0, 24)
   if (!targets.length) return
   let cursor = 0
   const concurrency = Math.max(1, Math.min(6, Number(options.enrichConcurrency) || 4))
@@ -428,6 +428,37 @@ async function enrichIndexItems(source, items, options = {}) {
     }
   }
   await Promise.all(Array.from({ length: concurrency }, () => worker()))
+}
+
+export function dedupeIndexResults(items, keyword) {
+  const needle = String(keyword || '').trim().toLowerCase()
+  const map = new Map()
+  const order = []
+  const quality = (item) => {
+    const name = String(item.name || '').toLowerCase()
+    let score = 0
+    if (name === needle) score += 1000
+    else if (name.startsWith(needle)) score += 300
+    else if (name.indexOf(needle) !== -1) score += 100
+    score -= Math.max(0, name.length - needle.length)
+    if (item.coverUrl) score += 5
+    if (item.intro) score += 5
+    return score
+  }
+  for (const item of items || []) {
+    const author = String(item.author || '').replace(/\s+/g, '').toLowerCase()
+    const latest = String(item.lastChapter || '').replace(/\s+/g, '').toLowerCase()
+    const key = author && latest
+      ? `book|${author}|${latest}`
+      : 'url|' + (item.bookUrl || Math.random())
+    if (!map.has(key)) {
+      map.set(key, item)
+      order.push(key)
+    } else if (quality(item) > quality(map.get(key))) {
+      map.set(key, item)
+    }
+  }
+  return order.map((key) => map.get(key))
 }
 
 async function searchByIndex(source, keyword, options = {}) {
@@ -507,8 +538,9 @@ async function searchByIndex(source, keyword, options = {}) {
     return score(bn) - score(an)
   })
 
-  const results = matched.slice(0, 50)
+  let results = matched.slice(0, 50)
   await enrichIndexItems(source, results, options)
+  results = dedupeIndexResults(results, needle)
 
   return {
     sourceId: source.id,
