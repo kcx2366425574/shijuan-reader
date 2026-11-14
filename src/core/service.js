@@ -203,6 +203,7 @@ const MAX_CACHE = 60
 
 export function clearHttpCache() {
   responseCache.clear()
+  indexSearchCache.clear()
 }
 
 function cachedGet(key) {
@@ -522,6 +523,10 @@ async function searchByIndex(source, keyword, options = {}) {
         }
       }
       await Promise.all(Array.from({ length: concurrency }, () => worker()))
+    }
+    if (indexSearchCache.size >= 6 && !indexSearchCache.has(cacheKey)) {
+      const first = indexSearchCache.keys().next().value
+      indexSearchCache.delete(first)
     }
     indexSearchCache.set(cacheKey, { at: Date.now(), items })
   }
