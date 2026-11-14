@@ -266,13 +266,15 @@ test('分类索引结果按书籍身份去重', () => {
     coverUrl: 'https://x/c.jpg'
   }
   const input = [
-    { ...base, name: '神通者精校版', bookUrl: 'https://x/3' },
-    { ...base, name: '神通者', bookUrl: 'https://x/1' },
-    { ...base, name: '神通者天蚕土豆更新', bookUrl: 'https://x/2' },
-    { ...base, name: '另一本', author: '另一位', lastChapter: '第1章', intro: '完全不同的简介', bookUrl: 'https://x/4' }
+    { ...base, sourceId: 's1', name: '神通者精校版', bookUrl: 'https://x/3' },
+    { ...base, sourceId: 's1', name: '神通者', bookUrl: 'https://x/1' },
+    { ...base, sourceId: 's1', name: '神通者天蚕土豆更新', bookUrl: 'https://x/2' },
+    { ...base, sourceId: 's2', name: '神通者', bookUrl: 'https://y/1' },
+    { ...base, sourceId: 's1', name: '另一本', author: '另一位', lastChapter: '第1章', intro: '完全不同的简介', bookUrl: 'https://x/4' }
   ]
   const result = dedupeIndexResults(input, '神通者')
-  assert.equal(result.length, 2)
+  assert.equal(result.length, 3)
   assert.equal(result[0].name, '神通者')
   assert.equal(result[0].bookUrl, 'https://x/1')
+  assert.ok(result.some((item) => item.sourceId === 's2' && item.bookUrl === 'https://y/1'))
 })

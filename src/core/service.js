@@ -448,8 +448,9 @@ export function dedupeIndexResults(items, keyword) {
   for (const item of items || []) {
     const author = String(item.author || '').replace(/\s+/g, '').toLowerCase()
     const latest = String(item.lastChapter || '').replace(/\s+/g, '').toLowerCase()
+    const sourceKey = item.sourceId || item.sourceName || ''
     const key = author && latest
-      ? `book|${author}|${latest}`
+      ? `book|${sourceKey}|${author}|${latest}`
       : 'url|' + (item.bookUrl || Math.random())
     if (!map.has(key)) {
       map.set(key, item)
