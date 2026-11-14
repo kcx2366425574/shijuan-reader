@@ -15,7 +15,7 @@
           retryChapter 使用该目标索引重试。
     验收：跳到靠后章节 → 断网 → 加载失败 → 恢复网络点“重试本章” → 加载的是目标章节。
 
-[ ] 2. 修复书源页“清空搜索缓存”假按钮
+[x] 2. 修复书源页“清空搜索缓存”假按钮
     位置：src/pages/sources/sources.vue:466-479
     问题：菜单项只弹 toast，没有真正清缓存；mine.vue:474 才是正确实现。
     做法：引入并调用 clearHttpCache()、clearBookCache()。

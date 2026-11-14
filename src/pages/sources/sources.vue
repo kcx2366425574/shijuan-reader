@@ -375,7 +375,8 @@ import {
   SOURCE_TEMPLATE,
   normalizeSource
 } from '../../core/source.js'
-import { testSource } from '../../core/service.js'
+import { testSource, clearHttpCache } from '../../core/service.js'
+import { clearBookCache } from '../../core/book-cache.js'
 import {
   syncSourceRepo,
   getSourceRepoConfig,
@@ -471,7 +472,9 @@ function openMore() {
       else if (res.tapIndex === 3) copyAllSources()
       else if (res.tapIndex === 4) restoreBuiltins()
       else if (res.tapIndex === 5) {
-        uni.showToast({ title: '下次搜索会重新请求', icon: 'none' })
+        clearHttpCache()
+        clearBookCache()
+        toastSuccess('搜索缓存已清除')
       }
     }
   })
