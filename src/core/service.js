@@ -71,14 +71,24 @@ function normalizeHeadersObject(headers) {
 }
 
 function defaultHeaders(source, referer) {
+  const h5 = isH5Runtime()
   const headers = {
-    'User-Agent': DEFAULT_UA,
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
   }
-  if (referer) headers.Referer = referer
+  // 浏览器禁止脚本设置 User-Agent / Referer；开发代理会在服务端补齐
+  if (!h5) {
+    headers['User-Agent'] = DEFAULT_UA
+    if (referer) headers.Referer = referer
+  }
   if (source && source.headers && typeof source.headers === 'object') {
     Object.assign(headers, source.headers)
+  }
+  if (h5) {
+    delete headers['User-Agent']
+    delete headers['user-agent']
+    delete headers.Referer
+    delete headers.referer
   }
   return headers
 }
