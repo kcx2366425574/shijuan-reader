@@ -47,8 +47,11 @@
 
     <view v-if="searching || statuses.length" class="status-panel">
       <view class="status-head">
-        <text class="section-label">{{ searching ? '搜索中' : '搜索完成' }}</text>
-        <text class="status-summary">{{ summaryText }}</text>
+        <view class="status-head-copy">
+          <text class="section-label">{{ searching ? '搜索中' : '搜索完成' }}</text>
+          <text class="status-summary">{{ summaryText }}</text>
+        </view>
+        <view v-if="searching && completedCount" class="stop-wait" @tap="stopWaiting">先看已有结果</view>
       </view>
       <scroll-view class="status-scroll" scroll-x :show-scrollbar="false">
         <view class="status-row">
@@ -237,6 +240,9 @@ const allSources = ref([])
 const selectedIds = ref([])
 const history = ref([])
 const showSourceSheet = ref(false)
+const searchRunId = ref(0)
+const completedCount = ref(0)
+const ignoreLateResults = ref(false)
 const settings = ref(loadSettings())
 const suggestions = ['神通者', '万相之王', '斗破苍穹', '诡秘之主']
 
@@ -250,10 +256,14 @@ const activeSources = computed(() => {
 const activeSourceCount = computed(() => activeSources.value.length)
 
 const summaryText = computed(() => {
-  if (searching.value) return '正在向各书源翻找…'
+  if (searching.value) {
+    const total = statuses.value.length || activeSourceCount.value
+    return `${groups.value.length} 本 · 已完成 ${completedCount.value}/${total} 个书源`
+  }
   const ok = statuses.value.filter((status) => status.state === 'done').length
   const failed = statuses.value.filter((status) => status.state === 'error').length
-  return `${groups.value.length} 本书 · ${ok} 个书源命中${failed ? ` · ${failed} 个失败` : ''}`
+  const skipped = statuses.value.filter((status) => status.state === 'skipped').length
+  return `${groups.value.length} 本书 · ${ok} 个书源命中${failed ? ` · ${failed} 个失败` : ''}${skipped ? ` · ${skipped} 个已跳过` : ''}`
 })
 
 function load() {
@@ -328,6 +338,7 @@ function statusText(status) {
   if (status.state === 'waiting') return '等待'
   if (status.state === 'error') return '失败'
   if (status.state === 'done') return status.count ? `${status.count} 条` : '无结果'
+  if (status.state === 'skipped') return '已跳过'
   return ''
 }
 
@@ -360,6 +371,9 @@ async function runSearch() {
     openSourceSheet()
     return
   }
+  const runId = ++searchRunId.value
+  ignoreLateResults.value = false
+  completedCount.value = 0
   keyword.value = text
   history.value = addSearchHistory(text)
   searching.value = true
@@ -373,33 +387,55 @@ async function runSearch() {
     error: ''
   }))
 
+  const completedItems = new Map()
+  const applyItem = (item) => {
+    updateStatus(item.source.id, {
+      state: item.error ? 'error' : 'done',
+      count: item.results.length,
+      error: item.error || ''
+    })
+    completedItems.set(item.source.id, item)
+    completedCount.value = completedItems.size
+    groups.value = groupSearchResults(Array.from(completedItems.values()))
+  }
+
   try {
     const results = await searchAllSources(activeSources.value, text, {
       concurrency: settings.value.searchConcurrency || 3,
       onSourceDone(item) {
-        updateStatus(item.source.id, {
-          state: item.error ? 'error' : 'done',
-          count: item.results.length,
-          error: item.error || ''
-        })
+        if (runId !== searchRunId.value || ignoreLateResults.value) return
+        applyItem(item)
       }
     })
+    if (runId !== searchRunId.value || ignoreLateResults.value) return
     // 兜底：极快返回时 onSourceDone 可能早于状态初始化
-    for (const item of results) {
-      updateStatus(item.source.id, {
-        state: item.error ? 'error' : 'done',
-        count: item.results.length,
-        error: item.error || ''
-      })
-    }
+    for (const item of results) applyItem(item)
     groups.value = groupSearchResults(results)
   } catch (e) {
-    toast(e && e.message ? e.message : '搜索失败')
+    if (!ignoreLateResults.value) toast(e && e.message ? e.message : '搜索失败')
   } finally {
-    searching.value = false
-    searchDone.value = true
-    history.value = loadSearchHistory()
+    if (runId === searchRunId.value) {
+      if (!ignoreLateResults.value) {
+        searching.value = false
+        searchDone.value = true
+      }
+      history.value = loadSearchHistory()
+    }
   }
+}
+
+function stopWaiting() {
+  if (!searching.value) return
+  ignoreLateResults.value = true
+  searching.value = false
+  searchDone.value = true
+  statuses.value = statuses.value.map((status) => {
+    if (status.state === 'waiting' || status.state === 'loading') {
+      return { ...status, state: 'skipped' }
+    }
+    return status
+  })
+  toast('已展示当前完成的书源结果')
 }
 
 function openGroup(group) {
@@ -1119,5 +1155,32 @@ onShow(load)
   margin-top: 4rpx;
   font-size: 19rpx;
   color: var(--muted);
+}
+
+.status-head-copy {
+  display: flex;
+  flex-direction: column;
+}
+
+.status-head {
+  align-items: center;
+}
+
+.stop-wait {
+  height: 52rpx;
+  padding: 0 18rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  font-size: 20rpx;
+  color: var(--jade);
+  background: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}
+
+.status-chip.skipped .status-indicator {
+  background: var(--muted);
+  opacity: 0.45;
 }
 </style>
