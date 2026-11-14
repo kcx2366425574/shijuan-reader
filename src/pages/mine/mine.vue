@@ -129,6 +129,14 @@
           </view>
           <text class="menu-arrow">›</text>
         </view>
+        <view class="menu-item" @tap="manageOffline" hover-class="press">
+          <view class="menu-icon source-menu-icon"><view class="source-menu-dot" /></view>
+          <view class="menu-copy">
+            <text class="menu-title">离线缓存</text>
+            <text class="menu-desc">{{ offlineStats.count }} 本 · {{ formatSize(offlineStats.size) || '0 KB' }}</text>
+          </view>
+          <text class="menu-arrow">›</text>
+        </view>
         <view class="menu-item" @tap="clearSearchCache" hover-class="press">
           <view class="menu-icon cache-menu-icon"><view class="cache-line" /><view class="cache-line short" /></view>
           <view class="menu-copy">
@@ -333,6 +341,7 @@ import {
 } from '../../core/theme.js'
 import { clearHttpCache } from '../../core/service.js'
 import { clearBookCache } from '../../core/book-cache.js'
+import { getOfflineStats, clearOfflineBooks } from '../../core/offline.js'
 import { APP_META } from '../../config.js'
 import {
   checkUpdate,
@@ -351,6 +360,7 @@ const versionName = ref(APP_META.versionName)
 const versionCode = ref(APP_META.versionCode)
 const shelfCount = ref(0)
 const sources = ref([])
+const offlineStats = ref({ count: 0, size: 0 })
 const showReadingSheet = ref(false)
 const showUpdateConfig = ref(false)
 const showUpdateSheet = ref(false)
@@ -418,6 +428,7 @@ function load() {
   settings.value = loadSettings()
   shelfCount.value = loadShelf().length
   sources.value = ensureSources()
+  offlineStats.value = getOfflineStats()
   updateInfo.value = loadUpdateInfo()
   updateForm.value = {
     provider: settings.value.updateProvider || getUpdateConfig(settings.value).provider || 'github',
@@ -468,6 +479,22 @@ function openReadingSheet() {
 
 function goSources() {
   uni.switchTab({ url: '/pages/sources/sources' })
+}
+
+async function manageOffline() {
+  if (!offlineStats.value.count) {
+    toast('还没有离线缓存')
+    return
+  }
+  const ok = await confirmDialog({
+    title: '清除离线缓存',
+    content: `将删除 ${offlineStats.value.count} 本已缓存书籍，书架和阅读进度不受影响。`,
+    confirmText: '清除'
+  })
+  if (!ok) return
+  await clearOfflineBooks()
+  offlineStats.value = getOfflineStats()
+  toastSuccess('离线缓存已清除')
 }
 
 async function clearSearchCache() {

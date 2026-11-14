@@ -123,6 +123,13 @@
             <view class="action-icon next-icon" />
             <text class="action-label">下一章</text>
           </view>
+          <view class="bottom-action" @tap="openCacheMenu" hover-class="press">
+            <view class="action-icon cache-icon">
+              <view class="cache-arrow" />
+              <view class="cache-tray" />
+            </view>
+            <text class="action-label">{{ cachePercent !== null ? '缓存 ' + cachePercent + '%' : '缓存' }}</text>
+          </view>
           <view class="bottom-action" @tap="openSettings" hover-class="press">
             <view class="action-icon settings-icon">
               <view class="settings-ring" />
@@ -291,6 +298,8 @@ import {
   saveSettings
 } from '../../core/store.js'
 import { getCachedBook, cacheBook } from '../../core/book-cache.js'
+import { getOfflineBook, getOfflineChapter } from '../../core/offline.js'
+import { downloadBook, cancelBookDownload, getDownloadState } from '../../core/download.js'
 import { openBook, getChapterContent } from '../../core/service.js'
 import { READER_THEMES, THEME_LIST, getTheme } from '../../core/theme.js'
 import { splitParagraphs, toast, pad2, clamp, firstReadableIndex } from '../../utils/format.js'
@@ -324,6 +333,8 @@ const scrollTopValue = ref(0)
 const trackedScrollTop = ref(0)
 const scrollKey = ref(0)
 const scrollRatio = ref(0)
+const cachePercent = ref(null)
+let cacheTimer = null
 const settings = ref(loadSettings())
 const themes = THEME_LIST
 const theme = computed(() => getTheme(settings.value.theme))
@@ -478,6 +489,14 @@ async function loadChapter(index, options = {}) {
   try {
     let result = chapterContentCache.get(chapter.url)
     if (!result) {
+      try {
+        result = await getOfflineChapter(book.value.id, chapter.url)
+      } catch (e) {
+        result = null
+      }
+    }
+    if (!result) {
+      if (!source.value) throw new Error('该章尚未缓存，且当前没有可用的书源')
       result = await getChapterContent(source.value, chapter, { bookUrl: book.value.bookUrl })
       chapterContentCache.set(chapter.url, result)
       if (chapterContentCache.size > 30) {
@@ -529,6 +548,7 @@ function runQueuedChapter() {
 }
 
 function prefetchNext(index) {
+  if (!source.value) return
   const next = chapters.value[index + 1]
   if (!next || chapterContentCache.has(next.url) || prefetching.has(next.url)) return
   prefetching.add(next.url)
@@ -562,7 +582,8 @@ async function init() {
 
   const sources = ensureSources()
   source.value = sources.find((item) => item.id === sourceId) || null
-  if (!source.value) {
+  const offlineBook = bookId ? await getOfflineBook(bookId) : null
+  if (!source.value && !offlineBook) {
     loadingBook.value = false
     fatalError.value = '找不到这本书的书源，可能已被删除。'
     return
@@ -579,6 +600,26 @@ async function init() {
       tocUrl: cached.tocUrl,
       name: (cached.info && cached.info.name) || (shelfBook && shelfBook.name) || '阅读'
     }
+  } else if (offlineBook && offlineBook.chapters && offlineBook.chapters.length) {
+    chapters.value = offlineBook.chapters
+    book.value = {
+      id: bookId,
+      ...(shelfBook || {}),
+      ...(offlineBook.info || {}),
+      sourceId: offlineBook.sourceId || sourceId,
+      sourceName: offlineBook.sourceName || '',
+      sourceUrl: source.value ? source.value.url : '',
+      bookUrl: offlineBook.bookUrl || bookUrl,
+      tocUrl: offlineBook.tocUrl || '',
+      chapterCount: chapters.value.length,
+      offline: true
+    }
+    cacheBook(bookId, {
+      info: book.value,
+      chapters: chapters.value,
+      bookUrl: book.value.bookUrl,
+      tocUrl: book.value.tocUrl
+    })
   } else {
     try {
       const opened = await openBook(source.value, bookUrl, shelfBook || {}, {})
@@ -625,6 +666,7 @@ async function init() {
   loadingBook.value = false
   await loadChapter(index, { restore: true })
 
+  refreshCacheState()
   if (settings.value.keepScreenOn) {
     try { uni.setKeepScreenOn({ keepScreenOn: true }) } catch (e) { /* ignore */ }
   }
@@ -730,6 +772,105 @@ function selectCatalogChapter(index) {
   setTimeout(() => loadChapter(index), 80)
 }
 
+function refreshCacheState() {
+  if (!book.value.id) return
+  const state = getDownloadState(book.value.id)
+  cachePercent.value = state ? state.percent : null
+  if (state) startCachePolling()
+  else stopCachePolling()
+}
+
+function startCachePolling() {
+  if (cacheTimer) return
+  cacheTimer = setInterval(() => {
+    const state = getDownloadState(book.value.id)
+    if (state) cachePercent.value = state.percent
+    else {
+      cachePercent.value = null
+      stopCachePolling()
+    }
+  }, 1000)
+}
+
+function stopCachePolling() {
+  if (cacheTimer) {
+    clearInterval(cacheTimer)
+    cacheTimer = null
+  }
+}
+
+function openCacheMenu() {
+  if (!book.value.id || !chapters.value.length) {
+    toast('目录还没有加载好')
+    return
+  }
+  if (!source.value) {
+    toast('当前没有可下载的书源')
+    return
+  }
+  const state = getDownloadState(book.value.id)
+  if (state) {
+    uni.showActionSheet({
+      itemList: ['取消缓存'],
+      success() {
+        cancelBookDownload(book.value.id)
+        toast('已请求取消，已下载章节会保留')
+      }
+    })
+    return
+  }
+  const index = currentIndex.value
+  const last = chapters.value.length - 1
+  uni.showActionSheet({
+    itemList: [`从本章缓存到结尾`, `仅缓存本章`, `缓存全书`],
+    success(res) {
+      if (res.tapIndex === 0) startCache(index, last, '开始从本章缓存')
+      else if (res.tapIndex === 1) startCache(index, index, '开始缓存本章')
+      else if (res.tapIndex === 2) startCache(0, last, '开始缓存全书')
+    }
+  })
+}
+
+function startCache(startIndex, endIndex, tip) {
+  ensureShelfEntry()
+  const payload = {
+    id: book.value.id,
+    name: book.value.name,
+    author: book.value.author,
+    coverUrl: book.value.coverUrl,
+    intro: book.value.intro,
+    kind: book.value.kind,
+    status: book.value.status,
+    lastChapter: book.value.lastChapter,
+    bookUrl: book.value.bookUrl,
+    tocUrl: book.value.tocUrl,
+    sourceId: source.value.id,
+    sourceName: source.value.name,
+    chapterCount: chapters.value.length
+  }
+  cachePercent.value = 0
+  toast(tip)
+  startCachePolling()
+  downloadBook(source.value, payload, chapters.value, {
+    startIndex,
+    endIndex,
+    concurrency: 3,
+    onProgress(state) {
+      if (state) cachePercent.value = state.percent
+    }
+  }).then((state) => {
+    cachePercent.value = null
+    stopCachePolling()
+    if (state.status === 'done') toast('全书已缓存，可离线阅读')
+    else if (state.status === 'cancelled') toast('已取消缓存')
+    else toast(`本次已缓存 ${state.done}/${state.total} 章`)
+  }).catch((e) => {
+    cachePercent.value = null
+    stopCachePolling()
+    toast(e && e.message ? e.message : '缓存失败')
+  })
+}
+
 function openSettings() {
   showSettings.value = true
   showToolbar.value = false
@@ -789,6 +930,7 @@ onUnload(() => {
   if (hideTimer) clearTimeout(hideTimer)
   if (saveTimer) clearTimeout(saveTimer)
   if (autoNextTimer) clearTimeout(autoNextTimer)
+  stopCachePolling()
   try { uni.setKeepScreenOn({ keepScreenOn: false }) } catch (e) { /* ignore */ }
 })
 
@@ -1576,5 +1718,46 @@ onBeforeUnmount(() => {
   margin: 0 -12rpx;
   padding: 0 12rpx;
   border-radius: 12rpx;
+}
+
+.cache-icon {
+  width: 30rpx;
+  height: 32rpx;
+  position: relative;
+}
+
+.cache-arrow {
+  position: absolute;
+  left: 14rpx;
+  top: 1rpx;
+  width: 3rpx;
+  height: 18rpx;
+  border-radius: 2rpx;
+  background: var(--r-text);
+  opacity: 0.8;
+}
+
+.cache-arrow::after {
+  content: '';
+  position: absolute;
+  left: -4rpx;
+  bottom: -1rpx;
+  width: 9rpx;
+  height: 9rpx;
+  border-right: 3rpx solid var(--r-text);
+  border-bottom: 3rpx solid var(--r-text);
+  transform: rotate(45deg);
+  opacity: 0.8;
+}
+
+.cache-tray {
+  position: absolute;
+  left: 3rpx;
+  bottom: 1rpx;
+  width: 24rpx;
+  height: 3rpx;
+  border-radius: 2rpx;
+  background: var(--r-text);
+  opacity: 0.8;
 }
 </style>

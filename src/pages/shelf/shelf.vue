@@ -90,6 +90,9 @@
             radius="10rpx"
             shadow
           />
+          <view v-if="offlineState(book)" class="offline-ribbon">
+            <text>{{ offlineState(book) }}</text>
+          </view>
           <view v-if="book.progress" class="read-ribbon">
             <text>{{ progressPercent(book) }}%</text>
           </view>
@@ -126,6 +129,7 @@ import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import BookCover from '../../components/BookCover.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import { loadOfflineIndex } from '../../core/offline.js'
 import {
   loadShelf,
   getContinueReading,
@@ -145,6 +149,7 @@ import {
 const shelf = ref([])
 const continueBook = ref(null)
 const sources = ref([])
+const offlineMap = ref({})
 const today = todayLabel()
 let suppressTap = false
 
@@ -162,6 +167,15 @@ function load() {
   shelf.value = loadShelf()
   continueBook.value = getContinueReading()
   sources.value = ensureSources()
+  offlineMap.value = Object.fromEntries(loadOfflineIndex().map((item) => [item.bookId, item]))
+}
+
+function offlineState(book) {
+  const meta = offlineMap.value[book.id]
+  if (!meta) return ''
+  if (meta.complete) return '离线'
+  if (!meta.chapterCount) return '离线'
+  return Math.round(((meta.cachedChapters || 0) / meta.chapterCount) * 100) + '%'
 }
 
 function goDiscover() {
@@ -616,5 +630,20 @@ onShow(load)
   height: 1rpx;
   background: var(--line-strong);
   margin: 0 18rpx;
+}
+
+.offline-ribbon {
+  position: absolute;
+  left: 10rpx;
+  top: 10rpx;
+  height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  background: rgba(47, 93, 80, 0.82);
+  color: #f4e8cf;
+  font-size: 18rpx;
+  display: flex;
+  align-items: center;
+  backdrop-filter: blur(6rpx);
 }
 </style>

@@ -77,6 +77,20 @@
         </view>
       </view>
 
+      <view class="offline-card" :class="{ done: offlineComplete, active: downloading }">
+        <view class="offline-icon">
+          <text>{{ offlineComplete ? '✓' : '↓' }}</text>
+        </view>
+        <view class="offline-copy">
+          <text class="offline-title">{{ offlineTitle }}</text>
+          <text class="offline-desc">{{ offlineDesc }}</text>
+          <view v-if="downloading || (offlineMeta && offlineMeta.cachedChapters && !offlineComplete)" class="offline-track">
+            <view class="offline-fill" :style="{ width: Math.max(2, downloadPercent) + '%' }" />
+          </view>
+        </view>
+        <view class="offline-btn" :class="{ primary: !offlineComplete }" @tap="handleOffline" hover-class="press">{{ offlineBtn }}</view>
+      </view>
+
       <view v-if="error" class="inline-error" @tap="refresh">
         <text>{{ error }}</text>
         <text class="inline-error-action">重试 ›</text>
@@ -178,7 +192,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 import BookCover from '../../components/BookCover.vue'
 import BottomSheet from '../../components/BottomSheet.vue'
 import LoadingState from '../../components/LoadingState.vue'
@@ -193,7 +207,9 @@ import { getCachedBook, cacheBook } from '../../core/book-cache.js'
 import { takeHandoff } from '../../core/handoff.js'
 import { openBook } from '../../core/service.js'
 import { searchAllSources, groupSearchResults } from '../../core/service.js'
-import { copyText, toast, toastSuccess, pad2, firstReadableIndex } from '../../utils/format.js'
+import { copyText, toast, toastSuccess, pad2, firstReadableIndex, confirmDialog } from '../../utils/format.js'
+import { getOfflineBook, getOfflineMeta, removeOfflineBook } from '../../core/offline.js'
+import { downloadBook, cancelBookDownload, getDownloadState } from '../../core/download.js'
 
 const params = ref({})
 const sources = ref([])
@@ -211,6 +227,11 @@ const switching = ref(false)
 const currentBookId = ref('')
 const currentBookUrl = ref('')
 const currentTocUrl = ref('')
+const offlineMeta = ref(null)
+const downloading = ref(false)
+const downloadPercent = ref(0)
+const downloadText = ref('')
+let offlineTimer = null
 
 const PAGE_SIZE = 100
 const initial = computed(() => String(info.value.name || '书').replace(/[《》\s]/g, '').slice(0, 1))
@@ -228,6 +249,26 @@ const readButtonText = computed(() => {
   if (!progress.value || !chapters.value.length) return chapters.value.length ? '开始阅读' : '正在载入'
   const name = progress.value.chapterName || `第 ${readIndex.value + 1} 章`
   return '继续阅读 · ' + (name.length > 12 ? name.slice(0, 12) + '…' : name)
+})
+
+const offlineComplete = computed(() => !!(offlineMeta.value && offlineMeta.value.complete))
+const offlineTitle = computed(() => {
+  if (downloading.value) return `正在缓存 ${downloadPercent.value}%`
+  if (offlineComplete.value) return '已缓存全书'
+  if (offlineMeta.value && offlineMeta.value.cachedChapters) return `已缓存 ${offlineMeta.value.cachedChapters}/${offlineMeta.value.chapterCount} 章`
+  return '整本离线缓存'
+})
+const offlineDesc = computed(() => {
+  if (downloading.value) return downloadText.value || '正在逐章下载…'
+  if (offlineComplete.value) return '之后阅读不再请求网络'
+  if (offlineMeta.value && offlineMeta.value.cachedChapters) return '可继续下载剩余章节'
+  return '一次性下载整本，弱网也能读'
+})
+const offlineBtn = computed(() => {
+  if (downloading.value) return '取消'
+  if (offlineComplete.value) return '删除'
+  if (offlineMeta.value && offlineMeta.value.cachedChapters) return '继续'
+  return '缓存'
 })
 
 const previewChapters = computed(() => {
@@ -286,6 +327,7 @@ function applyOpened(opened) {
     bookUrl: currentBookUrl.value,
     tocUrl: currentTocUrl.value
   })
+  refreshOfflineMeta()
   if (shelfBook.value) {
     shelfBook.value = updateShelfBook(shelfBook.value.id, {
       name: info.value.name,
@@ -301,6 +343,29 @@ function applyOpened(opened) {
       sourceUrl: source.value ? source.value.url : ''
     }) || shelfBook.value
   }
+}
+
+function applyOfflineBook(offline) {
+  info.value = {
+    ...info.value,
+    ...(offline.info || {}),
+    name: (offline.info && offline.info.name) || info.value.name || '未知书名',
+    author: (offline.info && offline.info.author) || info.value.author || '',
+    coverUrl: (offline.info && offline.info.coverUrl) || info.value.coverUrl || '',
+    intro: (offline.info && offline.info.intro) || info.value.intro || '',
+    kind: (offline.info && offline.info.kind) || info.value.kind || '',
+    lastChapter: (offline.info && offline.info.lastChapter) || info.value.lastChapter || ''
+  }
+  chapters.value = offline.chapters || []
+  currentTocUrl.value = offline.tocUrl || currentBookUrl.value
+  cacheBook(currentBookId.value, {
+    info: info.value,
+    chapters: chapters.value,
+    bookUrl: offline.bookUrl || currentBookUrl.value,
+    tocUrl: currentTocUrl.value
+  })
+  loading.value = false
+  refreshOfflineMeta()
 }
 
 async function load(force = false) {
@@ -324,9 +389,12 @@ async function load(force = false) {
     bookUrl = existing.bookUrl
     source.value = sources.value.find((item) => item.id === existing.sourceId) || null
     if (!source.value) {
-      loading.value = false
-      error.value = '这本书使用的书源已被删除，请重新添加书源或在书城换源。'
-      return
+      const offline = await getOfflineBook(bookId)
+      if (!offline || !offline.chapters || !offline.chapters.length) {
+        loading.value = false
+        error.value = '这本书使用的书源已被删除，且没有离线缓存。'
+        return
+      }
     }
   } else {
     source.value = sources.value.find((item) => item.id === params.value.sourceId) || null
@@ -350,6 +418,7 @@ async function load(force = false) {
 
   currentBookId.value = bookId
   currentBookUrl.value = bookUrl
+  const offlineBook = bookId ? await getOfflineBook(bookId) : null
   info.value = {
     ...fallback,
     name: fallback.name || '',
@@ -368,21 +437,154 @@ async function load(force = false) {
       chapters.value = cached.chapters
       currentTocUrl.value = cached.tocUrl || bookUrl
       loading.value = false
+      refreshOfflineMeta()
       return
     }
+  }
+
+  if (offlineBook && offlineBook.chapters && offlineBook.chapters.length && !source.value) {
+    applyOfflineBook(offlineBook)
+    return
   }
 
   try {
     const opened = await openBook(source.value, bookUrl, fallback)
     applyOpened(opened)
   } catch (e) {
-    error.value = e && e.message ? e.message : '加载失败'
-    if (!chapters.value.length) {
-      chapters.value = []
+    if (offlineBook && offlineBook.chapters && offlineBook.chapters.length) {
+      applyOfflineBook(offlineBook)
+      toast('网络不可用，已使用离线缓存')
+    } else {
+      error.value = e && e.message ? e.message : '加载失败'
+      if (!chapters.value.length) {
+        chapters.value = []
+      }
     }
   } finally {
     loading.value = false
   }
+}
+
+function applyDownloadState(state) {
+  if (!state) return
+  downloadPercent.value = state.percent || 0
+  downloadText.value = `正在缓存 ${state.done}/${state.total} 章${state.failed ? ` · ${state.failed} 章失败` : ''}`
+}
+
+function stopOfflinePolling() {
+  if (offlineTimer) {
+    clearInterval(offlineTimer)
+    offlineTimer = null
+  }
+}
+
+function refreshOfflineMeta() {
+  if (!currentBookId.value) return
+  offlineMeta.value = getOfflineMeta(currentBookId.value)
+  const state = getDownloadState(currentBookId.value)
+  if (state) {
+    downloading.value = true
+    applyDownloadState(state)
+    startOfflinePolling()
+  } else {
+    downloading.value = false
+    stopOfflinePolling()
+  }
+}
+
+function startOfflinePolling() {
+  if (offlineTimer) return
+  offlineTimer = setInterval(() => {
+    if (!currentBookId.value) return
+    const state = getDownloadState(currentBookId.value)
+    if (state) {
+      downloading.value = true
+      applyDownloadState(state)
+    } else {
+      downloading.value = false
+      offlineMeta.value = getOfflineMeta(currentBookId.value)
+      stopOfflinePolling()
+    }
+  }, 700)
+}
+
+async function handleOffline() {
+  if (!currentBookId.value) return
+  if (downloading.value) {
+    cancelBookDownload(currentBookId.value)
+    downloadText.value = '正在取消，已下载章节会保留…'
+    toast('已请求取消缓存')
+    return
+  }
+  if (offlineComplete.value) {
+    const ok = await confirmDialog({
+      title: '删除离线缓存',
+      content: '删除后需要联网才能阅读这本书。书架与阅读进度不受影响。',
+      confirmText: '删除'
+    })
+    if (!ok) return
+    await removeOfflineBook(currentBookId.value)
+    refreshOfflineMeta()
+    toast('离线缓存已删除')
+    return
+  }
+  if (!source.value) {
+    toast('书源不可用，暂时无法下载')
+    return
+  }
+  if (!chapters.value.length) {
+    toast('目录还没有加载好')
+    return
+  }
+  const startIndex = Math.max(0, Math.min(chapters.value.length - 1, readIndex.value))
+  const lastIndex = chapters.value.length - 1
+  const options = [
+    offlineMeta.value && offlineMeta.value.cachedChapters ? '继续缓存剩余全书' : '缓存全书',
+    `从第 ${startIndex + 1} 章缓存到结尾`,
+    `仅缓存第 ${startIndex + 1} 章`
+  ]
+  uni.showActionSheet({
+    itemList: options,
+    success(res) {
+      if (res.tapIndex === 0) beginOfflineDownload(0, lastIndex, '缓存全书')
+      else if (res.tapIndex === 1) beginOfflineDownload(startIndex, lastIndex, '从当前章缓存')
+      else if (res.tapIndex === 2) beginOfflineDownload(startIndex, startIndex, '缓存当前章')
+    }
+  })
+}
+
+function beginOfflineDownload(startIndex, endIndex, label) {
+  if (!source.value || !chapters.value.length) return
+  addToShelf(true)
+  downloading.value = true
+  downloadPercent.value = 0
+  downloadText.value = '正在准备下载…'
+  startOfflinePolling()
+  downloadBook(source.value, buildShelfPayload(), chapters.value, {
+    concurrency: 3,
+    startIndex,
+    endIndex,
+    onProgress(state) {
+      if (state) applyDownloadState(state)
+    }
+  }).then((state) => {
+    downloading.value = false
+    stopOfflinePolling()
+    refreshOfflineMeta()
+    if (state.status === 'done') toastSuccess('全书已缓存，可离线阅读')
+    else if (state.status === 'cancelled') toast('已取消，保留已下载章节')
+    else toast(`“${label}”完成，已缓存 ${metaCached()} 章，可稍后继续`)
+  }).catch((e) => {
+    downloading.value = false
+    stopOfflinePolling()
+    refreshOfflineMeta()
+    toast(e && e.message ? e.message : '缓存失败')
+  })
+}
+
+function metaCached() {
+  const meta = offlineMeta.value || getOfflineMeta(currentBookId.value)
+  return meta ? meta.cachedChapters || 0 : 0
 }
 
 function goBack() {
@@ -594,6 +796,14 @@ async function performSwitch(offer) {
 onLoad((options) => {
   params.value = options || {}
   load(false)
+})
+
+onShow(() => {
+  refreshOfflineMeta()
+})
+
+onUnload(() => {
+  stopOfflinePolling()
 })
 </script>
 
@@ -1167,5 +1377,96 @@ onLoad((options) => {
 .pager-info {
   font-size: 21rpx;
   color: var(--muted);
+}
+
+.offline-card {
+  display: flex;
+  align-items: center;
+  padding: 20rpx 22rpx;
+  margin-bottom: 20rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 252, 245, 0.55);
+  border: 1rpx solid var(--line);
+}
+
+.offline-card.done {
+  background: rgba(47, 93, 80, 0.06);
+  border-color: rgba(47, 93, 80, 0.14);
+}
+
+.offline-card.active {
+  background: rgba(176, 138, 82, 0.07);
+  border-color: rgba(176, 138, 82, 0.18);
+}
+
+.offline-icon {
+  width: 54rpx;
+  height: 54rpx;
+  border-radius: 16rpx;
+  background: rgba(47, 93, 80, 0.09);
+  color: var(--jade);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 25rpx;
+  flex-shrink: 0;
+}
+
+.offline-card.done .offline-icon {
+  background: var(--jade);
+  color: #f8f3e7;
+}
+
+.offline-copy {
+  flex: 1;
+  min-width: 0;
+  margin-left: 16rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.offline-title {
+  font-size: 23rpx;
+  color: var(--ink);
+}
+
+.offline-desc {
+  margin-top: 2rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+
+.offline-track {
+  height: 5rpx;
+  border-radius: 999rpx;
+  background: rgba(37, 42, 36, 0.08);
+  margin-top: 8rpx;
+  overflow: hidden;
+}
+
+.offline-fill {
+  height: 100%;
+  border-radius: 999rpx;
+  background: var(--gold);
+  transition: width 0.3s ease;
+}
+
+.offline-btn {
+  height: 56rpx;
+  padding: 0 22rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--line-strong);
+  color: var(--ink-soft);
+  font-size: 20rpx;
+  display: flex;
+  align-items: center;
+  margin-left: 14rpx;
+  flex-shrink: 0;
+}
+
+.offline-btn.primary {
+  background: var(--jade);
+  border-color: var(--jade);
+  color: #f8f3e7;
 }
 </style>
