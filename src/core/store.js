@@ -3,7 +3,7 @@
  * 使用 uni storage 持久化；Node 测试环境退化为内存 Map。
  */
 
-import { cloneBuiltinSources } from './builtin-sources.js'
+import { cloneBuiltinSources, BUILTIN_CONFIG_VERSION } from './builtin-sources.js'
 import { hashCode, normalizeSource } from './source.js'
 
 const HAS_UNI = typeof uni !== 'undefined' && uni && typeof uni.getStorageSync === 'function'
@@ -15,7 +15,8 @@ export const KEYS = {
   SHELF: 'shijuan.shelf.v1',
   SETTINGS: 'shijuan.settings.v1',
   SEARCH_HISTORY: 'shijuan.searchHistory.v1',
-  SEEDED: 'shijuan.seeded.v1'
+  SEEDED: 'shijuan.seeded.v1',
+  BUILTIN_VERSION: 'shijuan.builtinVersion.v1'
 }
 
 const DEFAULT_SETTINGS = {
@@ -111,27 +112,40 @@ export function saveSources(sources) {
  */
 export function ensureSources() {
   const seeded = readJson(KEYS.SEEDED, false)
-  let sources = loadSources()
+  const storedVersion = Number(readJson(KEYS.BUILTIN_VERSION, 0)) || 0
   const deleted = readJson(KEYS.DELETED_BUILTINS, [])
   const deletedSet = new Set(Array.isArray(deleted) ? deleted : [])
+  const map = new Map(loadSources().map((source) => [source.id, source]))
   let changed = false
+  const needsUpgrade = seeded && storedVersion < BUILTIN_CONFIG_VERSION
 
-  if (!seeded || !sources.length) {
-    const existingIds = new Set(sources.map((item) => item.id))
-    for (const builtin of cloneBuiltinSources()) {
-      if (existingIds.has(builtin.id)) continue
-      sources.push(builtinSource(builtin))
+  for (const builtin of cloneBuiltinSources()) {
+    const existing = map.get(builtin.id)
+    if (!existing) {
+      if (deletedSet.has(builtin.id)) continue
+      const fresh = builtinSource(builtin)
+      fresh.builtinConfigVersion = BUILTIN_CONFIG_VERSION
+      map.set(fresh.id, fresh)
       changed = true
+      continue
     }
-    if (sources.length) writeJson(KEYS.SEEDED, true)
-  } else {
-    const existingIds = new Set(sources.map((item) => item.id))
-    for (const builtin of cloneBuiltinSources()) {
-      if (existingIds.has(builtin.id) || deletedSet.has(builtin.id)) continue
-      sources.push(builtinSource(builtin))
+    if (needsUpgrade && existing.builtin && !existing.userModified) {
+      const fresh = builtinSource(builtin)
+      fresh.builtinConfigVersion = BUILTIN_CONFIG_VERSION
+      fresh.enabled = existing.enabled !== false
+      fresh.userModified = false
+      map.set(fresh.id, fresh)
       changed = true
     }
   }
+
+  if (!seeded || storedVersion !== BUILTIN_CONFIG_VERSION) {
+    writeJson(KEYS.SEEDED, true)
+    writeJson(KEYS.BUILTIN_VERSION, BUILTIN_CONFIG_VERSION)
+    changed = true
+  }
+
+  const sources = Array.from(map.values())
   if (changed) saveSources(sources)
   return sources
 }
@@ -188,6 +202,7 @@ export function restoreBuiltinSources() {
   const result = Array.from(map.values())
   saveSources(result)
   writeJson(KEYS.SEEDED, true)
+  writeJson(KEYS.BUILTIN_VERSION, BUILTIN_CONFIG_VERSION)
   return result
 }
 

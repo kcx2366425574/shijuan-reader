@@ -161,6 +161,7 @@ function parseAndNormalize() {
     normalized.id = existing.value.id
     normalized.builtin = existing.value.builtin
     normalized.enabled = existing.value.enabled
+    if (existing.value.builtin) normalized.userModified = true
   }
   validationErrors.value = normalized.errors || []
   validationWarnings.value = normalized.warnings || []

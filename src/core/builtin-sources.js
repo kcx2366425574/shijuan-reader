@@ -9,6 +9,8 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
+export const BUILTIN_CONFIG_VERSION = 2
+
 export const BUILTIN_SOURCES = [
   {
     id: 'builtin-85zw',
