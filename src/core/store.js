@@ -16,7 +16,8 @@ export const KEYS = {
   SETTINGS: 'shijuan.settings.v1',
   SEARCH_HISTORY: 'shijuan.searchHistory.v1',
   SEEDED: 'shijuan.seeded.v1',
-  BUILTIN_VERSION: 'shijuan.builtinVersion.v1'
+  BUILTIN_VERSION: 'shijuan.builtinVersion.v1',
+  PROGRESS: 'shijuan.progress.v1'
 }
 
 const DEFAULT_SETTINGS = {
@@ -212,7 +213,17 @@ export function makeBookId(sourceId, bookUrl) {
 
 export function loadShelf() {
   const shelf = readJson(KEYS.SHELF, [])
-  return Array.isArray(shelf) ? shelf : []
+  const progressMap = readJson(KEYS.PROGRESS, {})
+  if (!Array.isArray(shelf)) return []
+  return shelf.map((book) => {
+    const progress = progressMap && progressMap[book.id]
+    if (!progress) return book
+    return {
+      ...book,
+      progress,
+      lastReadAt: Math.max(book.lastReadAt || 0, progress.updatedAt || 0)
+    }
+  })
 }
 
 export function saveShelf(shelf) {
@@ -282,18 +293,23 @@ export function updateShelfBook(id, patch) {
 export function removeShelfBook(id) {
   const result = loadShelf().filter((book) => book.id !== id)
   saveShelf(result)
+  const progressMap = readJson(KEYS.PROGRESS, {})
+  if (progressMap && progressMap[id]) {
+    delete progressMap[id]
+    writeJson(KEYS.PROGRESS, progressMap)
+  }
   return result
 }
 
 export function updateBookProgress(id, progress) {
-  const shelf = loadShelf()
-  const index = shelf.findIndex((book) => book.id === id)
-  if (index === -1) return null
-  shelf[index].progress = progress
-  shelf[index].lastReadAt = Date.now()
-  if (progress && progress.chapterName) shelf[index].lastChapter = progress.chapterName
-  saveShelf(shelf)
-  return shelf[index]
+  if (!id) return null
+  const progressMap = readJson(KEYS.PROGRESS, {}) || {}
+  progressMap[id] = {
+    ...(progress || {}),
+    updatedAt: (progress && progress.updatedAt) || Date.now()
+  }
+  writeJson(KEYS.PROGRESS, progressMap)
+  return loadShelf().find((book) => book.id === id) || null
 }
 
 export function getContinueReading() {
@@ -356,6 +372,7 @@ export function clearSearchHistory() {
 
 export function clearReadingData() {
   removeKey(KEYS.SHELF)
+  removeKey(KEYS.PROGRESS)
   removeKey(KEYS.SEARCH_HISTORY)
 }
 

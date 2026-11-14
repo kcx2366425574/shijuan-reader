@@ -439,7 +439,7 @@ function saveProgress(immediate) {
   const run = () => updateBookProgress(book.value.id, payload)
   if (saveTimer) clearTimeout(saveTimer)
   if (immediate) run()
-  else saveTimer = setTimeout(run, 500)
+  else saveTimer = setTimeout(run, 2000)
 }
 
 function ensureShelfEntry() {
