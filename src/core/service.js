@@ -1,0 +1,662 @@
+/**
+ * 书源请求服务：负责网络请求、编码、文档解析，并把结果交给规则引擎。
+ *
+ * 同一套代码运行在：
+ * - uni-app App（uni.request 直连）
+ * - H5 开发服务器（自动走 /__proxy，绕开浏览器 CORS）
+ * - Node 验证脚本（使用 fetch）
+ */
+
+import { decodeResponse } from './charset.js'
+import { parseHTML } from './html.js'
+import {
+  buildTemplate,
+  extractBookInfo,
+  extractChapterContent,
+  extractChapters,
+  extractSearchResults,
+  resolveUrl
+} from './rule.js'
+
+export const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+const HAS_UNI = typeof uni !== 'undefined' && uni && typeof uni.request === 'function'
+const IS_DEV = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV
+
+function isH5Runtime() {
+  if (typeof uni !== 'undefined' && uni.getSystemInfoSync) {
+    try {
+      const info = uni.getSystemInfoSync()
+      if (info && info.uniPlatform) return info.uniPlatform === 'web'
+    } catch (e) {
+      // ignore
+    }
+  }
+  return typeof window !== 'undefined' && typeof document !== 'undefined'
+}
+
+const USE_DEV_PROXY = !!IS_DEV && isH5Runtime()
+
+export class RequestError extends Error {
+  constructor(message, options = {}) {
+    super(message)
+    this.name = 'RequestError'
+    this.stage = options.stage || ''
+    this.status = options.status || 0
+    this.url = options.url || ''
+    this.sourceName = options.sourceName || ''
+  }
+}
+
+export function proxiedUrl(url, referer) {
+  const target = String(url || '')
+  if (!USE_DEV_PROXY || !/^https?:\/\//i.test(target)) return target
+  return '/__proxy?url=' + encodeURIComponent(target) + '&referer=' + encodeURIComponent(referer || target)
+}
+
+function getHeader(headers, name) {
+  if (!headers) return ''
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) return headers[key]
+  }
+  return ''
+}
+
+function normalizeHeadersObject(headers) {
+  const result = {}
+  for (const key of Object.keys(headers || {})) {
+    result[key.toLowerCase()] = headers[key]
+  }
+  return result
+}
+
+function defaultHeaders(source, referer) {
+  const headers = {
+    'User-Agent': DEFAULT_UA,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+  }
+  if (referer) headers.Referer = referer
+  if (source && source.headers && typeof source.headers === 'object') {
+    Object.assign(headers, source.headers)
+  }
+  return headers
+}
+
+function abortAfter(ms) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer)
+  }
+}
+
+async function requestBytes(url, options = {}) {
+  const target = String(url || '').trim()
+  if (!/^https?:\/\//i.test(target)) {
+    throw new RequestError('无效的请求地址：' + target, { url: target, stage: options.stage })
+  }
+  const method = String(options.method || 'GET').toUpperCase()
+  const body = options.body == null ? '' : String(options.body)
+  const headers = options.headers || {}
+  const timeout = Math.max(3000, Number(options.timeout) || 25000)
+  const requestUrl = proxiedUrl(target, options.referer || options.sourceUrl || target)
+
+  if (HAS_UNI) {
+    return new Promise((resolve, reject) => {
+      uni.request({
+        url: requestUrl,
+        method,
+        header: headers,
+        data: (method === 'GET' || method === 'HEAD') ? undefined : body,
+        timeout,
+        responseType: 'arraybuffer',
+        success(res) {
+          const status = res.statusCode || 0
+          let bytes = new Uint8Array(0)
+          if (res.data instanceof ArrayBuffer) {
+            bytes = new Uint8Array(res.data)
+          } else if (ArrayBuffer.isView(res.data)) {
+            bytes = new Uint8Array(res.data.buffer, res.data.byteOffset, res.data.byteLength)
+          } else if (typeof res.data === 'string') {
+            if (typeof TextEncoder !== 'undefined') {
+              bytes = new TextEncoder().encode(res.data)
+            } else {
+              bytes = Uint8Array.from(Array.from(res.data).map((ch) => ch.charCodeAt(0) & 0xff))
+            }
+          }
+          resolve({
+            status,
+            headers: res.header || res.headers || {},
+            bytes,
+            url: target
+          })
+        },
+        fail(err) {
+          const message = err && err.errMsg ? err.errMsg : '网络请求失败'
+          reject(new RequestError(friendlyNetworkError(message), {
+            url: target,
+            stage: options.stage,
+            sourceName: options.sourceName
+          }))
+        }
+      })
+    })
+  }
+
+  const controller = abortAfter(timeout)
+  try {
+    const response = await fetch(target, {
+      method,
+      headers,
+      body: (method === 'GET' || method === 'HEAD') ? undefined : body,
+      redirect: 'follow',
+      signal: controller.signal
+    })
+    const buffer = await response.arrayBuffer()
+    const responseHeaders = {}
+    response.headers.forEach((value, key) => {
+      responseHeaders[key] = value
+    })
+    return {
+      status: response.status,
+      headers: responseHeaders,
+      bytes: new Uint8Array(buffer),
+      url: response.url || target
+    }
+  } catch (e) {
+    const message = e && e.name === 'AbortError' ? '请求超时' : (e && e.message) || '网络请求失败'
+    throw new RequestError(message, {
+      url: target,
+      stage: options.stage,
+      sourceName: options.sourceName
+    })
+  } finally {
+    controller.clear()
+  }
+}
+
+function friendlyNetworkError(message) {
+  const text = String(message || '')
+  if (/timeout|timed out/i.test(text)) return '请求超时，请检查网络或稍后重试'
+  if (/abort/i.test(text)) return '请求已取消'
+  if (/domain|dns|resolve|host/i.test(text)) return '域名解析失败，请检查网络'
+  if (/SSL|TLS|certificate/i.test(text)) return 'HTTPS 证书校验失败'
+  if (/CORS|cross-origin/i.test(text)) return '浏览器跨域限制，请在 App 中使用或配置代理'
+  return '网络请求失败：' + text
+}
+
+const responseCache = new Map()
+const CACHE_TTL = 2 * 60 * 1000
+const MAX_CACHE = 60
+
+export function clearHttpCache() {
+  responseCache.clear()
+}
+
+function cachedGet(key) {
+  const item = responseCache.get(key)
+  if (!item) return null
+  if (Date.now() > item.expire) {
+    responseCache.delete(key)
+    return null
+  }
+  return item.value
+}
+
+function putCache(key, value) {
+  if (responseCache.size >= MAX_CACHE) {
+    const first = responseCache.keys().next().value
+    responseCache.delete(first)
+  }
+  responseCache.set(key, { value, expire: Date.now() + CACHE_TTL })
+}
+
+function looksBlocked(text) {
+  const sample = String(text || '')
+  if (sample.length > 20000) return false
+  const strong = /Just a moment|cf-browser-verification|Enable JavaScript and cookies|Access denied|人机验证|安全验证|访问验证|请开启JavaScript|滑动验证/i
+  if (strong.test(sample)) return true
+  if (sample.length < 4000 && /加载中……|加载中\.\.\./.test(sample)) return true
+  return false
+}
+
+/**
+ * 请求并按编码解码为文本。
+ */
+export async function fetchText(url, options = {}) {
+  const source = options.source || {}
+  const method = String(options.method || 'GET').toUpperCase()
+  const body = options.body == null ? '' : String(options.body)
+  const referer = options.referer || source.url || ''
+  const headers = Object.assign(
+    defaultHeaders(source, referer),
+    options.headers || {}
+  )
+  if (method !== 'GET' && method !== 'HEAD' && body && !getHeader(headers, 'content-type')) {
+    headers['Content-Type'] = body.trim().startsWith('{')
+      ? 'application/json; charset=utf-8'
+      : 'application/x-www-form-urlencoded'
+  }
+
+  const cacheKey = method + '|' + url + '|' + body
+  if (method === 'GET' && options.cache !== false) {
+    const hit = cachedGet(cacheKey)
+    if (hit) return hit
+  }
+
+  const response = await requestBytes(url, {
+    method,
+    body,
+    headers,
+    timeout: options.timeout,
+    stage: options.stage,
+    sourceName: source.name,
+    sourceUrl: source.url,
+    referer
+  })
+
+  const contentType = getHeader(response.headers, 'content-type')
+  const { text, charset } = decodeResponse(response.bytes, contentType, source.charset || 'auto')
+  if (response.status >= 400) {
+    throw new RequestError(`网站返回 HTTP ${response.status}`, {
+      url,
+      status: response.status,
+      stage: options.stage,
+      sourceName: source.name
+    })
+  }
+  if (!text || !text.trim()) {
+    throw new RequestError('网站返回了空内容', {
+      url,
+      status: response.status,
+      stage: options.stage,
+      sourceName: source.name
+    })
+  }
+  if (looksBlocked(text)) {
+    throw new RequestError('该网站启用了人机验证/反爬，已无法直接解析', {
+      url,
+      status: response.status,
+      stage: options.stage,
+      sourceName: source.name
+    })
+  }
+
+  const result = {
+    text,
+    charset,
+    status: response.status,
+    headers: response.headers,
+    contentType,
+    url: response.url || url
+  }
+  if (method === 'GET' && options.cache !== false) putCache(cacheKey, result)
+  return result
+}
+
+function parseJsonLoose(text) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return null
+  try {
+    return JSON.parse(trimmed)
+  } catch (e) {
+    // JSONP
+    const match = trimmed.match(/^[\w$.]+\s*\(([\s\S]*)\)\s*;?$/)
+    if (match) {
+      try {
+        return JSON.parse(match[1])
+      } catch (e2) {
+        return null
+      }
+    }
+    return null
+  }
+}
+
+export function parseDocument(text, source = {}, contentType = '') {
+  const trimmed = String(text || '').trim()
+  const looksJsonp = /^[\w$.]+\s*\([\s\S]*\)\s*;?$/.test(trimmed)
+  const shouldTryJson = source.type === 'json' ||
+    /json/i.test(contentType || '') ||
+    trimmed[0] === '{' ||
+    trimmed[0] === '[' ||
+    looksJsonp
+  if (shouldTryJson) {
+    const json = parseJsonLoose(trimmed)
+    if (json !== null) {
+      return { doc: null, jsonRoot: json, isJson: true }
+    }
+  }
+  return { doc: parseHTML(text), jsonRoot: undefined, isJson: false }
+}
+
+function ensureBase(source) {
+  const url = String(source.url || '').trim()
+  if (!url) return ''
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : 'https://' + url.replace(/^\/+/, '')
+}
+
+export function buildSearchRequest(source, key) {
+  const base = ensureBase(source)
+  const vars = { key, baseUrl: base, page: 1 }
+  const template = source.searchUrl || ''
+  const target = buildTemplate(template, vars, source.searchCharset || source.charset || 'utf-8')
+  const url = resolveUrl(base, target)
+  const method = String(source.searchMethod || (source.searchBody ? 'POST' : 'GET')).toUpperCase()
+  const body = source.searchBody
+    ? buildTemplate(source.searchBody, vars, source.searchCharset || source.charset || 'utf-8')
+    : ''
+  return { url, method, body, base }
+}
+
+/**
+ * 搜索单个书源。
+ */
+export async function searchSource(source, key, options = {}) {
+  if (!source.searchUrl) throw new RequestError('该书源没有搜索地址', { stage: 'search', sourceName: source.name })
+  if (!source.ruleSearch || !source.ruleSearch.bookList) {
+    throw new RequestError('该书源没有搜索列表规则', { stage: 'search', sourceName: source.name })
+  }
+  const keyword = String(key || '').trim()
+  if (!keyword) throw new RequestError('请输入搜索关键词', { stage: 'search', sourceName: source.name })
+  const startedAt = Date.now()
+  const request = buildSearchRequest(source, keyword)
+  if (!request.url) throw new RequestError('搜索地址无效', { stage: 'search', sourceName: source.name })
+
+  const page = await fetchText(request.url, {
+    source,
+    method: request.method,
+    body: request.body,
+    stage: 'search',
+    timeout: options.timeout
+  })
+  const parsed = parseDocument(page.text, source, page.contentType)
+  const results = extractSearchResults(parsed.doc, source, {
+    baseUrl: page.url || request.url,
+    jsonRoot: parsed.jsonRoot
+  })
+  return {
+    sourceId: source.id,
+    sourceName: source.name,
+    results,
+    url: request.url,
+    finalUrl: page.url,
+    charset: page.charset,
+    isJson: parsed.isJson,
+    elapsed: Date.now() - startedAt
+  }
+}
+
+function sameHost(urlA, urlB) {
+  const host = (value) => {
+    const match = String(value || '').match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i)
+    return match ? match[1].toLowerCase() : ''
+  }
+  return host(urlA) === host(urlB)
+}
+
+/**
+ * 打开书籍：抓详情页，再抓目录页。
+ */
+export async function openBook(source, bookUrl, fallback = {}, options = {}) {
+  const base = ensureBase(source)
+  const target = resolveUrl(base, bookUrl)
+  if (!target) throw new RequestError('书籍地址无效', { stage: 'book', sourceName: source.name })
+
+  const page = await fetchText(target, { source, referer: base, stage: 'book', timeout: options.timeout })
+  const parsed = parseDocument(page.text, source, page.contentType)
+  const info = extractBookInfo(parsed.doc, source, {
+    baseUrl: page.url || target,
+    bookUrl: target,
+    jsonRoot: parsed.jsonRoot,
+    fallback
+  })
+  info.name = info.name || fallback.name || ''
+  info.author = info.author || fallback.author || ''
+  info.coverUrl = info.coverUrl || fallback.coverUrl || ''
+  info.intro = info.intro || fallback.intro || ''
+  info.kind = info.kind || fallback.kind || ''
+
+  let chapters = []
+  let tocUrl = info.tocUrl || target
+  if (source.singleChapter) {
+    chapters = [{ name: info.name || '全文', url: target }]
+    tocUrl = target
+  } else if (tocUrl && tocUrl !== target) {
+    const tocPage = await fetchText(tocUrl, { source, referer: target, stage: 'toc', timeout: options.timeout })
+    const tocParsed = parseDocument(tocPage.text, source, tocPage.contentType)
+    chapters = extractChapters(tocParsed.doc, source, {
+      baseUrl: tocPage.url || tocUrl,
+      jsonRoot: tocParsed.jsonRoot
+    })
+  }
+  if (!chapters.length) {
+    chapters = extractChapters(parsed.doc, source, {
+      baseUrl: page.url || target,
+      jsonRoot: parsed.jsonRoot
+    })
+    tocUrl = target
+  }
+  if (!info.name && chapters.length && fallback.name) info.name = fallback.name
+  if (!chapters.length) {
+    throw new RequestError('没有解析到章节列表，书源规则可能已失效', {
+      stage: 'toc',
+      sourceName: source.name,
+      url: tocUrl
+    })
+  }
+
+  return {
+    info,
+    chapters,
+    bookUrl: target,
+    tocUrl,
+    charset: page.charset,
+    elapsed: Date.now()
+  }
+}
+
+/**
+ * 获取章节正文，自动跟随正文分页（最多 5 页）。
+ */
+export async function getChapterContent(source, chapter, options = {}) {
+  const base = ensureBase(source)
+  const target = resolveUrl(base, chapter.url)
+  if (!target) throw new RequestError('章节地址无效', { stage: 'content', sourceName: source.name })
+
+  const page = await fetchText(target, {
+    source,
+    referer: options.bookUrl || base,
+    stage: 'content',
+    timeout: options.timeout,
+    cache: false
+  })
+  const parsed = parseDocument(page.text, source, page.contentType)
+  const first = extractChapterContent(parsed.doc, source, {
+    baseUrl: page.url || target,
+    jsonRoot: parsed.jsonRoot,
+    chapterName: chapter.name
+  })
+
+  let content = first.content
+  let title = first.title || chapter.name
+  let next = first.nextContentUrl
+  const visited = new Set([target])
+  while (next && !visited.has(next) && visited.size < 6) {
+    if (!sameHost(next, target)) break
+    visited.add(next)
+    try {
+      const nextPage = await fetchText(next, {
+        source,
+        referer: target,
+        stage: 'content',
+        timeout: options.timeout,
+        cache: false
+      })
+      const nextParsed = parseDocument(nextPage.text, source, nextPage.contentType)
+      const part = extractChapterContent(nextParsed.doc, source, {
+        baseUrl: nextPage.url || next,
+        jsonRoot: nextParsed.jsonRoot,
+        chapterName: title
+      })
+      if (part.content && part.content !== content) {
+        content += '\n' + part.content
+      }
+      next = part.nextContentUrl
+    } catch (e) {
+      break
+    }
+  }
+
+  return {
+    title,
+    content,
+    url: target,
+    chapterName: chapter.name,
+    elapsed: Date.now()
+  }
+}
+
+/**
+ * 书源体检：搜索 → 详情 → 目录 → 第一章正文。
+ */
+export async function testSource(source, keyword, options = {}) {
+  const report = {
+    sourceId: source.id,
+    sourceName: source.name,
+    keyword,
+    stages: {},
+    ok: false
+  }
+  const progress = typeof options.onProgress === 'function' ? options.onProgress : () => {}
+  try {
+    progress('search', '正在搜索…')
+    const search = await searchSource(source, keyword, options)
+    report.stages.search = {
+      ok: true,
+      count: search.results.length,
+      elapsed: search.elapsed,
+      sample: search.results.slice(0, 3)
+    }
+    if (!search.results.length) throw new RequestError('没有搜索到结果', { stage: 'search', sourceName: source.name })
+
+    const first = search.results[0]
+    progress('book', `正在打开《${first.name}》…`)
+    const book = await openBook(source, first.bookUrl, first, options)
+    report.stages.book = {
+      ok: true,
+      name: book.info.name,
+      author: book.info.author,
+      coverUrl: book.info.coverUrl,
+      chapterCount: book.chapters.length,
+      tocUrl: book.tocUrl
+    }
+    if (!book.chapters.length) throw new RequestError('目录为空', { stage: 'toc', sourceName: source.name })
+
+    progress('content', `正在读取《${book.chapters[0].name}》…`)
+    const chapter = await getChapterContent(source, book.chapters[0], { ...options, bookUrl: book.bookUrl })
+    report.stages.content = {
+      ok: true,
+      title: chapter.title,
+      length: chapter.content.length,
+      preview: chapter.content.slice(0, 120)
+    }
+    report.book = {
+      name: book.info.name,
+      author: book.info.author,
+      coverUrl: book.info.coverUrl,
+      intro: book.info.intro,
+      tocUrl: book.tocUrl,
+      chapters: book.chapters
+    }
+    report.result = first
+    report.ok = true
+    progress('done', '书源可用')
+    return report
+  } catch (e) {
+    report.error = e && e.message ? e.message : '测试失败'
+    report.errorStage = e && e.stage ? e.stage : ''
+    progress('error', report.error)
+    return report
+  }
+}
+
+/**
+ * 并发搜索多个书源。
+ */
+export async function searchAllSources(sources, keyword, options = {}) {
+  const enabled = (sources || []).filter((source) => options.includeDisabled || source.enabled !== false)
+  const concurrency = Math.max(1, Math.min(6, Number(options.concurrency) || 3))
+  const results = []
+  let cursor = 0
+  const onSourceDone = typeof options.onSourceDone === 'function' ? options.onSourceDone : () => {}
+
+  async function worker() {
+    while (cursor < enabled.length) {
+      const index = cursor++
+      const source = enabled[index]
+      const started = Date.now()
+      try {
+        const result = await searchSource(source, keyword, options)
+        const item = { source, results: result.results, error: '', elapsed: result.elapsed }
+        results[index] = item
+        onSourceDone(item)
+      } catch (e) {
+        const item = {
+          source,
+          results: [],
+          error: e && e.message ? e.message : '搜索失败',
+          elapsed: Date.now() - started
+        }
+        results[index] = item
+        onSourceDone(item)
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()))
+  return results.filter(Boolean)
+}
+
+function normalizeBookKey(name, author) {
+  return String(name || '').replace(/[《》\s\-—_·:：]/g, '').toLowerCase() +
+    '|' +
+    String(author || '').replace(/[\s\-—_·:：]/g, '').toLowerCase()
+}
+
+/**
+ * 聚合多个书源的搜索结果，按“书名 + 作者”去重。
+ */
+export function groupSearchResults(items) {
+  const groups = new Map()
+  for (const item of items || []) {
+    for (const result of item.results || []) {
+      const key = normalizeBookKey(result.name, result.author)
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name: result.name,
+          author: result.author,
+          coverUrl: result.coverUrl,
+          intro: result.intro,
+          kind: result.kind,
+          lastChapter: result.lastChapter,
+          offers: []
+        })
+      }
+      const group = groups.get(key)
+      group.offers.push({
+        ...result,
+        sourceId: result.sourceId || item.source.id,
+        sourceName: result.sourceName || item.source.name
+      })
+      if (!group.coverUrl && result.coverUrl) group.coverUrl = result.coverUrl
+      if (!group.intro && result.intro) group.intro = result.intro
+      if (!group.kind && result.kind) group.kind = result.kind
+      if (!group.lastChapter && result.lastChapter) group.lastChapter = result.lastChapter
+    }
+  }
+  return Array.from(groups.values())
+}
