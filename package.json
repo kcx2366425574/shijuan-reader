@@ -2,7 +2,6 @@
   "name": "shijuan-reader",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "description": "拾卷 · 支持自定义书源的电子书阅读器",
   "scripts": {
     "dev:h5": "uni",

@@ -27,7 +27,16 @@ const DEFAULT_SETTINGS = {
   keepScreenOn: true,
   searchConcurrency: 3,
   coverQuality: 'normal',
-  autoAddShelf: true
+  autoAddShelf: true,
+  autoCheckUpdate: true,
+  updateProvider: '',
+  updateRepo: '',
+  updateManifestUrl: '',
+  sourceRepoAutoSync: true,
+  sourceRepoProvider: '',
+  sourceRepoRepo: '',
+  sourceRepoBranch: 'main',
+  sourceRepoManifestUrl: ''
 }
 
 function clone(value) {
@@ -215,6 +224,7 @@ export function upsertShelfBook(book) {
     id,
     sourceId,
     sourceName: book.sourceName || '',
+    sourceUrl: book.sourceUrl || '',
     name: book.name || '未知书名',
     author: book.author || '',
     coverUrl: book.coverUrl || '',
@@ -245,6 +255,15 @@ export function upsertShelfBook(book) {
   }
   saveShelf(shelf)
   return index === -1 ? incoming : shelf[index]
+}
+
+export function updateShelfBook(id, patch) {
+  const shelf = loadShelf()
+  const index = shelf.findIndex((book) => book.id === id)
+  if (index === -1) return null
+  shelf[index] = { ...shelf[index], ...(patch || {}) }
+  saveShelf(shelf)
+  return shelf[index]
 }
 
 export function removeShelfBook(id) {

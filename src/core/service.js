@@ -351,16 +351,138 @@ export function buildSearchRequest(source, key) {
   return { url, method, body, base }
 }
 
+const indexSearchCache = new Map()
+const INDEX_CACHE_TTL = 6 * 60 * 60 * 1000
+
+function buildCrawlIndexUrls(source, base) {
+  const urls = []
+  if (Array.isArray(source.indexPages) && source.indexPages.length) {
+    for (const page of source.indexPages) {
+      const url = resolveUrl(base, String(page))
+      if (url) urls.push(url)
+    }
+    return urls
+  }
+  if (!source.indexPagePattern) return urls
+  const categories = Array.isArray(source.indexCategories) && source.indexCategories.length
+    ? source.indexCategories
+    : ['']
+  const limit = Math.max(1, Math.min(100, Number(source.indexPageLimit) || 1))
+  for (let page = 1; page <= limit; page++) {
+    for (const category of categories) {
+      const path = String(source.indexPagePattern)
+        .replace(/\{page\}/g, String(page))
+        .replace(/\{category\}/g, String(category))
+      const url = resolveUrl(base, path)
+      if (url) urls.push(url)
+    }
+  }
+  return urls
+}
+
+async function searchByIndex(source, keyword, options = {}) {
+  const startedAt = Date.now()
+  const base = ensureBase(source)
+  const cacheKey = source.id + '|' + (source.searchIndexUrl || source.indexPagePattern || '') + '|' + (source.indexPageLimit || '')
+  let cached = indexSearchCache.get(cacheKey)
+  let items = cached && Date.now() - cached.at < INDEX_CACHE_TTL ? cached.items : null
+
+  if (!items) {
+    items = []
+    const seen = new Set()
+    const urlPattern = source.indexBookUrlPattern ? new RegExp(source.indexBookUrlPattern) : null
+    const addResult = (result) => {
+      if (!result || !result.name || !result.bookUrl) return
+      if (urlPattern && !urlPattern.test(result.bookUrl)) return
+      if (seen.has(result.bookUrl)) return
+      seen.add(result.bookUrl)
+      items.push(result)
+    }
+
+    if (source.searchIndexUrl) {
+      const indexUrl = resolveUrl(source.repoManifestUrl || base, source.searchIndexUrl)
+      const page = await fetchText(indexUrl, { source, cache: true, stage: 'search' })
+      let payload
+      try { payload = JSON.parse(page.text) } catch (e) { throw new RequestError('书源索引不是有效 JSON', { stage: 'search', sourceName: source.name }) }
+      const books = Array.isArray(payload) ? payload : (payload.books || payload.sources || [])
+      for (const book of books) {
+        addResult({
+          name: book.name || book.title || '',
+          author: book.author || '',
+          coverUrl: book.coverUrl || book.cover || '',
+          intro: book.intro || book.description || '',
+          kind: book.kind || book.category || '',
+          lastChapter: book.lastChapter || '',
+          bookUrl: resolveUrl(base, book.url || book.bookUrl || ''),
+          sourceId: source.id,
+          sourceName: source.name,
+          sourceUrl: source.url
+        })
+      }
+    } else {
+      const pageUrls = buildCrawlIndexUrls(source, base)
+      let cursor = 0
+      const concurrency = Math.max(1, Math.min(8, Number(options.indexConcurrency) || 6))
+      async function worker() {
+        while (cursor < pageUrls.length) {
+          const index = cursor++
+          const pageUrl = pageUrls[index]
+          try {
+            const page = await fetchText(pageUrl, { source, cache: true, stage: 'search', timeout: 15000 })
+            const doc = parseHTML(page.text)
+            const results = extractSearchResults(doc, { ...source, ruleSearch: source.ruleSearch || {} }, {
+              baseUrl: page.url || pageUrl
+            })
+            for (const result of results) addResult(result)
+          } catch (e) {
+            // 分类页可能停更/404，跳过
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: concurrency }, () => worker()))
+    }
+    indexSearchCache.set(cacheKey, { at: Date.now(), items })
+  }
+
+  const needle = String(keyword || '').trim().toLowerCase()
+  const matched = items.filter((item) => {
+    const name = String(item.name || '').toLowerCase()
+    const author = String(item.author || '').toLowerCase()
+    return name.indexOf(needle) !== -1 || author.indexOf(needle) !== -1
+  })
+  matched.sort((a, b) => {
+    const an = String(a.name || '').toLowerCase()
+    const bn = String(b.name || '').toLowerCase()
+    const score = (name) => name === needle ? 3 : name.startsWith(needle) ? 2 : 1
+    return score(bn) - score(an)
+  })
+
+  return {
+    sourceId: source.id,
+    sourceName: source.name,
+    results: matched.slice(0, 50),
+    url: source.searchIndexUrl || '(分类索引)',
+    finalUrl: '',
+    charset: 'utf-8',
+    isJson: false,
+    elapsed: Date.now() - startedAt
+  }
+}
+
 /**
  * 搜索单个书源。
  */
 export async function searchSource(source, key, options = {}) {
+  const searchKey = String(key || '').trim()
+  if (!searchKey) throw new RequestError('请输入搜索关键词', { stage: 'search', sourceName: source.name })
+  if (source.searchMode === 'crawl-index' || source.searchIndexUrl) {
+    return searchByIndex(source, searchKey, options)
+  }
   if (!source.searchUrl) throw new RequestError('该书源没有搜索地址', { stage: 'search', sourceName: source.name })
   if (!source.ruleSearch || !source.ruleSearch.bookList) {
     throw new RequestError('该书源没有搜索列表规则', { stage: 'search', sourceName: source.name })
   }
-  const keyword = String(key || '').trim()
-  if (!keyword) throw new RequestError('请输入搜索关键词', { stage: 'search', sourceName: source.name })
+  const keyword = searchKey
   const startedAt = Date.now()
   const request = buildSearchRequest(source, keyword)
   if (!request.url) throw new RequestError('搜索地址无效', { stage: 'search', sourceName: source.name })
@@ -387,6 +509,18 @@ export async function searchSource(source, key, options = {}) {
     isJson: parsed.isJson,
     elapsed: Date.now() - startedAt
   }
+}
+
+function sameChapterPage(currentUrl, nextUrl) {
+  const normalize = (value) => String(value || '')
+    .replace(/[?#].*$/, '')
+    .replace(/_\d+(\.html?)$/i, '$1')
+  const a = normalize(currentUrl)
+  const b = normalize(nextUrl)
+  if (a && b && a === b) return true
+  // 查询参数分页：?page=2 / &p=2
+  const queryPage = (value) => String(value || '').replace(/([?&](?:page|p)=\d+)/ig, '$1')
+  return queryPage(currentUrl) === queryPage(nextUrl) && /[?&](?:page|p)=\d+/i.test(nextUrl)
 }
 
 function sameHost(urlA, urlB) {
@@ -484,8 +618,9 @@ export async function getChapterContent(source, chapter, options = {}) {
   let title = first.title || chapter.name
   let next = first.nextContentUrl
   const visited = new Set([target])
-  while (next && !visited.has(next) && visited.size < 6) {
+  while (next && !visited.has(next) && visited.size < 20) {
     if (!sameHost(next, target)) break
+    if (source.followAnyContentPage !== true && !sameChapterPage(target, next)) break
     visited.add(next)
     try {
       const nextPage = await fetchText(next, {
@@ -587,7 +722,9 @@ export async function testSource(source, keyword, options = {}) {
  * 并发搜索多个书源。
  */
 export async function searchAllSources(sources, keyword, options = {}) {
-  const enabled = (sources || []).filter((source) => options.includeDisabled || source.enabled !== false)
+  const enabled = (sources || [])
+    .filter((source) => options.includeDisabled || source.enabled !== false)
+    .filter((source) => source.direct !== true && (!!source.searchUrl || source.searchMode === 'crawl-index' || !!source.searchIndexUrl))
   const concurrency = Math.max(1, Math.min(6, Number(options.concurrency) || 3))
   const results = []
   let cursor = 0

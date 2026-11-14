@@ -17,13 +17,15 @@ import {
 import { BUILTIN_SOURCES } from '../src/core/builtin-sources.js'
 
 test('内置书源结构完整且通过校验', () => {
-  assert.ok(BUILTIN_SOURCES.length >= 2)
+  assert.ok(BUILTIN_SOURCES.length >= 5)
   for (const source of BUILTIN_SOURCES) {
     assert.equal(validateSource(source).length, 0, source.name)
-    assert.ok(source.ruleSearch.bookList)
-    assert.ok(source.ruleToc.chapterList)
-    assert.ok(source.ruleContent.content)
+    if (!source.direct && !source.singleChapter) assert.ok(source.ruleSearch.bookList, source.name)
+    if (!source.singleChapter) assert.ok(source.ruleToc.chapterList, source.name)
+    assert.ok(source.ruleContent.content, source.name)
   }
+  assert.ok(BUILTIN_SOURCES.some((source) => source.searchMode === 'crawl-index' || source.direct))
+  assert.ok(BUILTIN_SOURCES.some((source) => source.singleChapter))
 })
 
 test('规范化 Legado 书源字段', () => {

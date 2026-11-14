@@ -11,6 +11,7 @@
  */
 
 import {
+  ancestors,
   getAttr,
   innerHTML,
   normalizeText,
@@ -649,7 +650,8 @@ export function extractSearchResults(doc, source, context = {}) {
       lastChapter,
       bookUrl,
       sourceId: source.id,
-      sourceName: source.name
+      sourceName: source.name,
+      sourceUrl: source.url || ''
     })
     if (results.length >= 100) break
   }
@@ -881,11 +883,31 @@ export function autoDetectContentElement(doc) {
 
   let best = null
   let bestScore = 0
+  const scores = new Map()
   for (const node of candidates) {
     const score = scoreContentElement(node, hints)
+    scores.set(node, score)
     if (score > bestScore) {
       bestScore = score
       best = node
+    }
+  }
+  // 避免选中包住正文的整个 main/body：若内部有分数接近的候选，优先内部容器
+  if (best) {
+    let refined = null
+    let refinedScore = 0
+    for (const node of candidates) {
+      if (node === best) continue
+      if (!ancestors(node).includes(best)) continue
+      const score = scores.get(node) || 0
+      if (score >= bestScore * 0.72 && score > refinedScore) {
+        refined = node
+        refinedScore = score
+      }
+    }
+    if (refined) {
+      best = refined
+      bestScore = refinedScore
     }
   }
   return bestScore >= 100 ? best : null

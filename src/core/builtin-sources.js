@@ -99,6 +99,129 @@ export const BUILTIN_SOURCES = [
     replaceRules: [],
     tocReverse: false,
     singleChapter: false
+  },
+  {
+    id: 'builtin-yoboi',
+    name: '笔趣阁分类索引',
+    url: 'https://www.yoboi.com',
+    group: '小说',
+    enabled: true,
+    builtin: true,
+    direct: false,
+    searchMode: 'crawl-index',
+    indexPagePattern: '/sort/{category}/{page}/',
+    indexCategories: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    indexPageLimit: 8,
+    indexBookUrlPattern: '/xiaoshuo/\\d+\\.html$',
+    type: 'html',
+    charset: 'utf-8',
+    searchUrl: '',
+    searchMethod: 'GET',
+    searchBody: '',
+    searchCharset: 'utf-8',
+    ruleSearch: {
+      bookList: 'a[href^="/xiaoshuo/"]',
+      name: '@text',
+      bookUrl: '@href'
+    },
+    ruleBookInfo: {
+      name: 'meta[property="og:novel:book_name"]@content##在线阅读$##',
+      author: 'meta[property="og:novel:author"]@content',
+      coverUrl: 'meta[property="og:image"]@content',
+      intro: 'meta[property="og:description"]@content',
+      kind: 'meta[property="og:novel:category"]@content',
+      status: 'meta[property="og:novel:status"]@content',
+      lastChapter: 'meta[property="og:novel:latest_chapter_name"]@content'
+    },
+    ruleToc: {
+      chapterList: 'div.info-chapters a',
+      chapterName: '@text',
+      chapterUrl: '@href'
+    },
+    ruleContent: {
+      title: '.reader-main h1##\\s*（\\d+ / \\d+）$##',
+      content: 'article#article',
+      nextContentUrl: '#next_url@href'
+    },
+    replaceRules: [],
+    tocReverse: false,
+    singleChapter: false
+  },
+  {
+    id: 'builtin-biqvge99',
+    name: '顶点小说网',
+    url: 'https://www.biqvge99.cc',
+    group: '小说',
+    enabled: true,
+    builtin: true,
+    type: 'html',
+    charset: 'auto',
+    searchUrl: '/s.php?q={{key}}',
+    searchMethod: 'GET',
+    searchBody: '',
+    searchCharset: 'utf-8',
+    ruleSearch: {
+      bookList: 'div.bookbox',
+      name: 'h4.bookname a',
+      author: 'div.author',
+      bookUrl: 'h4.bookname a@href',
+      coverUrl: 'div.bookimg img@src',
+      intro: 'div.bookinfo p',
+      kind: 'div.cat',
+      lastChapter: 'div.update'
+    },
+    ruleBookInfo: {
+      name: 'h1',
+      author: 'meta[property="og:novel:author"]@content',
+      coverUrl: 'meta[property="og:image"]@content',
+      intro: '.intro',
+      kind: 'meta[property="og:novel:category"]@content',
+      status: 'meta[property="og:novel:status"]@content',
+      lastChapter: 'meta[property="og:novel:latest_chapter_name"]@content'
+    },
+    ruleToc: {
+      chapterList: '.listmain dd',
+      chapterName: 'a',
+      chapterUrl: 'a@href'
+    },
+    ruleContent: {
+      title: 'h1',
+      content: '#content'
+    },
+    replaceRules: [],
+    tocReverse: false,
+    singleChapter: false
+  },
+  {
+    id: 'builtin-gutenberg',
+    name: '古登堡计划',
+    url: 'https://gutendex.com',
+    group: '公版',
+    enabled: true,
+    builtin: true,
+    type: 'json',
+    charset: 'utf-8',
+    searchUrl: '/books/?search={{key}}',
+    searchMethod: 'GET',
+    searchBody: '',
+    searchCharset: 'utf-8',
+    ruleSearch: {
+      bookList: '$.results[*]',
+      name: '$.title',
+      author: '$.authors[0].name',
+      bookUrl: '$.formats["text/plain; charset=utf-8"] || $.formats["text/plain"] || $.formats["text/html"]',
+      coverUrl: '$.formats["image/jpeg"]',
+      intro: '$.subjects[0]',
+      kind: '$.bookshelves[0] || $.languages[0]'
+    },
+    ruleBookInfo: {},
+    ruleToc: {},
+    ruleContent: {
+      content: '@text'
+    },
+    replaceRules: [],
+    tocReverse: false,
+    singleChapter: true
   }
 ]
 

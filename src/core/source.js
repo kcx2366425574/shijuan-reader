@@ -136,6 +136,8 @@ export function normalizeSource(raw, options = {}) {
   const charset = normalizeCharset(input.charset || 'auto')
   const type = extractType(input, ruleSearch)
   const singleChapter = input.singleChapter === true
+  const direct = input.direct === true
+  const searchMode = String(input.searchMode || '').trim()
   const tocReverse = input.tocReverse === true || ruleToc.reverse === true || ruleToc.reverse === 'true'
   delete ruleToc.reverse
 
@@ -160,6 +162,15 @@ export function normalizeSource(raw, options = {}) {
     replaceRules,
     tocReverse,
     singleChapter,
+    direct,
+    searchMode,
+    indexPages: Array.isArray(input.indexPages) ? input.indexPages : [],
+    indexPagePattern: String(input.indexPagePattern || ''),
+    indexCategories: Array.isArray(input.indexCategories) ? input.indexCategories : [],
+    indexPageLimit: Math.max(1, Math.min(100, Number(input.indexPageLimit) || 1)),
+    indexBookUrlPattern: String(input.indexBookUrlPattern || ''),
+    searchIndexUrl: String(input.searchIndexUrl || ''),
+    followAnyContentPage: input.followAnyContentPage === true,
     updatedAt: Date.now()
   }
 
@@ -169,9 +180,15 @@ export function normalizeSource(raw, options = {}) {
 
   if (!name) errors.push('缺少书源名称')
   if (!url) errors.push('缺少网站地址')
-  if (!searchUrl) warnings.push('缺少搜索地址，暂时无法搜索（可使用智能识别补充）')
-  if (!ruleSearch.bookList) warnings.push('缺少搜索列表规则，暂时无法解析搜索结果')
-  if (type === 'json' && !searchUrl) warnings.push('JSON 书源通常需要搜索地址')
+  if (!direct && searchMode !== 'crawl-index') {
+    if (!searchUrl) warnings.push('缺少搜索地址，暂时无法搜索（可使用智能识别补充）')
+    if (!ruleSearch.bookList) warnings.push('缺少搜索列表规则，暂时无法解析搜索结果')
+    if (type === 'json' && !searchUrl) warnings.push('JSON 书源通常需要搜索地址')
+  } else if (searchMode === 'crawl-index' && (!ruleSearch.bookList || (!input.indexPagePattern && !input.searchIndexUrl))) {
+    warnings.push('分类索引搜索缺少 pagePattern 或搜索规则')
+  } else if (direct && (!ruleBookInfo || !ruleToc || !ruleContent)) {
+    warnings.push('直链书源缺少详情/目录/正文规则，可能无法解析')
+  }
 
   warnings.push(...collectUnsupportedWarnings(source))
   source.warnings = Array.from(new Set(warnings))
@@ -228,6 +245,12 @@ export function validateSource(source) {
   const errors = []
   if (!source || !source.name) errors.push('缺少书源名称')
   if (!source || !source.url) errors.push('缺少网站地址')
+  if (source && source.direct) return errors
+  if (source && source.searchMode === 'crawl-index') {
+    if (!source.ruleSearch || !source.ruleSearch.bookList) errors.push('缺少分类索引搜索规则')
+    if (!source.indexPagePattern && !source.searchIndexUrl) errors.push('缺少分类页模板')
+    return errors
+  }
   if (!source || !source.searchUrl) errors.push('缺少搜索地址')
   if (!source || !source.ruleSearch || !source.ruleSearch.bookList) errors.push('缺少搜索列表规则')
   return errors
@@ -255,6 +278,15 @@ export function exportSource(source) {
     replaceRules: source.replaceRules,
     tocReverse: source.tocReverse,
     singleChapter: source.singleChapter,
+    direct: source.direct === true,
+    searchMode: source.searchMode || '',
+    indexPages: source.indexPages,
+    indexPagePattern: source.indexPagePattern,
+    indexCategories: source.indexCategories,
+    indexPageLimit: source.indexPageLimit,
+    indexBookUrlPattern: source.indexBookUrlPattern,
+    searchIndexUrl: source.searchIndexUrl,
+    followAnyContentPage: source.followAnyContentPage === true,
     type: source.type
   }
 }

@@ -88,7 +88,8 @@ test('提取搜索列表（85zw 风格）', () => {
     lastChapter: '第1838章 大结局',
     bookUrl: 'https://www.85zw.com/book/19217200136/',
     sourceId: 's1',
-    sourceName: '八五中文网'
+    sourceName: '八五中文网',
+    sourceUrl: 'https://www.85zw.com'
   })
 })
 
