@@ -390,6 +390,46 @@ function buildCrawlIndexUrls(source, base) {
   return urls
 }
 
+async function enrichIndexItems(source, items, options = {}) {
+  if (!source.ruleBookInfo || !Object.keys(source.ruleBookInfo).length) return
+  if (options.enrich === false) return
+  const targets = items.filter((item) => item.bookUrl && !item._enriched).slice(0, 12)
+  if (!targets.length) return
+  let cursor = 0
+  const concurrency = Math.max(1, Math.min(6, Number(options.enrichConcurrency) || 4))
+  async function worker() {
+    while (cursor < targets.length) {
+      const item = targets[cursor++]
+      try {
+        const page = await fetchText(item.bookUrl, {
+          source,
+          referer: source.url,
+          cache: true,
+          timeout: 12000,
+          stage: 'search'
+        })
+        const parsed = parseDocument(page.text, source, page.contentType)
+        const info = extractBookInfo(parsed.doc, source, {
+          baseUrl: page.url || item.bookUrl,
+          bookUrl: item.bookUrl,
+          jsonRoot: parsed.jsonRoot,
+          fallback: item
+        })
+        item.name = info.name || item.name
+        item.author = item.author || info.author || ''
+        item.coverUrl = item.coverUrl || info.coverUrl || ''
+        item.intro = item.intro || info.intro || ''
+        item.kind = item.kind || info.kind || ''
+        item.lastChapter = item.lastChapter || info.lastChapter || ''
+        item._enriched = true
+      } catch (e) {
+        // 单本详情失败不影响整个搜索结果
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()))
+}
+
 async function searchByIndex(source, keyword, options = {}) {
   const startedAt = Date.now()
   const base = ensureBase(source)
@@ -467,10 +507,13 @@ async function searchByIndex(source, keyword, options = {}) {
     return score(bn) - score(an)
   })
 
+  const results = matched.slice(0, 50)
+  await enrichIndexItems(source, results, options)
+
   return {
     sourceId: source.id,
     sourceName: source.name,
-    results: matched.slice(0, 50),
+    results,
     url: source.searchIndexUrl || '(分类索引)',
     finalUrl: '',
     charset: 'utf-8',
