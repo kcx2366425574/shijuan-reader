@@ -66,7 +66,7 @@
       d) 清单中移除的源标记为“已下架”，不静默残留。
     验收：同步耗时下降；引擎不兼容时不破坏现有可用书源。
 
-[ ] 9. 缓存加上限
+[x] 9. 缓存加上限
     位置：src/core/service.js:364（indexSearchCache）、200-224（responseCache）、
           src/components/BookCover.vue（coverCache）
     做法：统一按条目数或字节数做 LRU，暴露 clear 方法。
@@ -79,7 +79,7 @@
           阅读页优先用本地目录，后台刷新。
     验收：飞行模式下可打开已读过的书并看到目录。
 
-[ ] 11. 阅读进度单独存储 + 节流
+[x] 11. 阅读进度单独存储 + 节流
     位置：src/pages/reader/reader.vue:413-427、src/core/store.js:290-299
     问题：滚动结束会把整张书架同步写入 storage。
     做法：进度独立 key，2 秒节流；书架数据只在增删改时写。
@@ -138,14 +138,14 @@
 四、书源仓库（D:\code\shijuan-sources）
 ====================================================================
 
-[ ] 35. 修正文档不一致
+[x] 35. 修正文档不一致
     - README.md:3 “4 个”应为 5 个
     - README.md:35 与 37 重复的“解析策略”段落
     - src/core/builtin-sources.js 注释“这两个源”已过时
 [ ] 36. validate.mjs 改用 schema/book-source.schema.json（ajv），避免两套规则漂移
 [ ] 37. 增加 health.json：GitHub Actions 每晚联网巡检搜索/详情/目录/正文，
         App 拉取后显示“可用/失效”
-[ ] 38. 明确 index.json 中单条目 version 的语义，App 端用于增量同步
+[x] 38. 明确 index.json 中单条目 version 的语义，App 端用于增量同步
 [ ] 39. 可选：为每个书源增加离线 fixture 回归测试
 
 ====================================================================
