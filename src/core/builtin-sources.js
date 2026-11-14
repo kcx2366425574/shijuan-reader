@@ -14,6 +14,7 @@ export const BUILTIN_CONFIG_VERSION = 2
 export const BUILTIN_SOURCES = [
   {
     id: 'builtin-85zw',
+    description: '玄幻、都市等常见小说，目录与正文完整。',
     name: '八五中文网',
     url: 'https://www.85zw.com',
     group: '小说',
@@ -59,6 +60,7 @@ export const BUILTIN_SOURCES = [
   },
   {
     id: 'builtin-quanben',
+    description: '完本小说较多，使用 AMP 完整目录，适合作为备用源。',
     name: '全本小说网',
     url: 'https://www.quanben.io',
     group: '小说',
@@ -104,6 +106,7 @@ export const BUILTIN_SOURCES = [
   },
   {
     id: 'builtin-yoboi',
+    description: '收录较多，首次搜索稍慢，适合备用。',
     name: '笔趣阁分类索引',
     url: 'https://www.yoboi.com',
     group: '小说',
@@ -151,6 +154,7 @@ export const BUILTIN_SOURCES = [
   },
   {
     id: 'builtin-biqvge99',
+    description: '搜索速度较快，目录与正文完整。',
     name: '顶点小说网',
     url: 'https://www.biqvge99.cc',
     group: '小说',
@@ -196,6 +200,7 @@ export const BUILTIN_SOURCES = [
   },
   {
     id: 'builtin-gutenberg',
+    description: '公版经典与英文原著，通过古登堡计划搜索，单本全文阅读。',
     name: '古登堡计划',
     url: 'https://gutendex.com',
     group: '公版',

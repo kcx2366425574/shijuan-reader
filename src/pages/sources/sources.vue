@@ -5,9 +5,9 @@
       <view class="header-copy">
         <text class="header-kicker">SOURCES · 书源</text>
         <text class="header-title serif">万千站点，皆可成卷</text>
-        <text class="header-sub">支持导入 Legado 书源，也可以让拾卷自动识别网站</text>
+        <text class="header-sub">打开即用；书源失效时可以一键同步更新</text>
       </view>
-      <view class="header-actions">
+      <view v-if="showAdvanced" class="header-actions">
         <view class="round-btn" @tap="openImport" hover-class="press">
           <text class="plus">+</text>
         </view>
@@ -31,11 +31,6 @@
         <text class="stat-value serif">{{ enabledCount }}</text>
         <text class="stat-label">已启用</text>
       </view>
-      <view class="stat-divider" />
-      <view class="stat-item">
-        <text class="stat-value serif">{{ customCount }}</text>
-        <text class="stat-label">自定义</text>
-      </view>
     </view>
 
     <view class="repo-card" :class="{ configured: repoConfigured }">
@@ -45,21 +40,21 @@
       </view>
       <view class="repo-info">
         <view class="repo-title-row">
-          <text class="repo-title">书源仓库</text>
-          <text class="repo-badge" :class="{ on: repoConfigured }">{{ repoConfigured ? '已连接' : '未配置' }}</text>
+          <text class="repo-title">书源库</text>
+          <text class="repo-badge" :class="{ on: repoConfigured }">{{ repoConfigured ? '自动更新' : '内置' }}</text>
         </view>
-        <text class="repo-desc">{{ repoDesc }}</text>
-        <text class="repo-meta-line">{{ repoMeta }}</text>
+        <text class="repo-desc">{{ repoConfigured ? '书源会自动检查更新，失效时可以手动同步' : '当前使用内置书源，无需配置' }}</text>
+        <text v-if="repoConfigured" class="repo-meta-line">{{ repoLastSyncText }}</text>
       </view>
       <view class="repo-actions">
-        <view class="repo-btn" @tap.stop="openRepoConfig" hover-class="press">配置</view>
-        <view class="repo-btn primary" :class="{ disabled: repoSyncing }" @tap.stop="syncRepo" hover-class="press">
+        <view v-if="showAdvanced" class="repo-btn" @tap.stop="openRepoConfig" hover-class="press">配置</view>
+        <view v-if="repoConfigured" class="repo-btn primary" :class="{ disabled: repoSyncing }" @tap.stop="syncRepo" hover-class="press">
           {{ repoSyncing ? '同步中' : '同步' }}
         </view>
       </view>
     </view>
 
-    <view class="quick-actions">
+    <view v-if="showAdvanced" class="quick-actions">
       <view class="quick-action primary" @tap="goDetect" hover-class="press">
         <view class="quick-icon spark">
           <view class="spark-line s1" />
@@ -95,8 +90,8 @@
     </view>
 
     <view class="list-head">
-      <text class="section-label">书源列表</text>
-      <text class="list-hint">点按编辑 · 长按更多</text>
+      <text class="section-label">可用书源</text>
+      <text class="list-hint advanced-link" @tap="toggleAdvanced">{{ showAdvanced ? '收起高级工具' : '高级工具' }}</text>
     </view>
 
     <view v-if="sources.length" class="source-list">
@@ -107,8 +102,8 @@
         :class="{ off: source.enabled === false }"
         hover-class="press"
         :hover-stay-time="80"
-        @tap="editSource(source)"
-        @longpress="showSourceMenu(source)"
+        @tap="openSourceInfo(source)"
+        @longpress="handleSourceLongPress(source)"
       >
         <view class="source-top">
           <view class="source-mark" :class="{ builtin: source.builtin }">
@@ -120,8 +115,8 @@
               <text class="source-name ellipsis">{{ source.name }}</text>
               <text class="source-group">{{ source.group || '自定义' }}</text>
             </view>
-            <text class="source-host ellipsis">{{ hostOf(source.url) }}</text>
-            <view class="source-meta">
+            <text class="source-desc ellipsis">{{ sourceDescription(source) }}</text>
+            <view v-if="showAdvanced" class="source-meta">
               <text class="source-meta-chip">{{ source.type === 'json' ? 'JSON' : 'HTML' }}</text>
               <text class="source-meta-chip">{{ (source.charset || 'auto').toUpperCase() }}</text>
               <text v-if="source.direct" class="source-meta-chip">DIRECT</text>
@@ -141,7 +136,7 @@
             />
           </view>
         </view>
-        <view class="source-bottom">
+        <view v-if="showAdvanced" class="source-bottom">
           <view class="source-actions">
             <view v-if="!source.direct" class="source-action" @tap.stop="openTest(source)" hover-class="press">体检</view>
             <view class="source-action" @tap.stop="editSource(source)" hover-class="press">编辑</view>
@@ -149,20 +144,24 @@
           </view>
           <text class="source-state">{{ source.enabled === false ? '已停用' : '参与搜索' }}</text>
         </view>
+        <view v-else class="source-reader-state">
+          <text class="state-dot" :class="{ on: source.enabled !== false }" />
+          <text>{{ source.enabled === false ? '已停用' : '可用' }}</text>
+        </view>
       </view>
     </view>
 
     <EmptyState
       v-else
-      title="还没有书源"
-      desc="书源决定了拾卷能去哪里找书。你可以导入现成的 Legado 书源，也可以让拾卷自动识别一个网站。"
-      action-text="智能识别网站"
-      @action="goDetect"
+      title="书源不见了"
+      desc="内置书源可能被停用或删除。恢复后即可继续搜索书籍。"
+      action-text="恢复内置书源"
+      @action="restoreBuiltins"
     />
 
     <view class="footer-note">
       <text class="footer-title">关于书源</text>
-      <text class="footer-text">书源是解析网站页面的规则，不存储小说内容。请仅访问你有权阅读的内容，并遵守目标网站的使用条款。网站结构变化后，可用“体检”定位问题或使用“智能识别”重新生成规则。</text>
+      <text class="footer-text">书源会自动更新，只负责找书与解析公开网页，不保存小说内容。若某本书搜不到，可以换个书源或稍后再试。</text>
     </view>
 
     <view class="bottom-space" />
@@ -297,6 +296,62 @@
         <view class="primary-btn config-btn" @tap="saveRepoConfig">保存</view>
       </view>
     </BottomSheet>
+
+    <BottomSheet v-model:show="showSourceInfo" :title="infoSource ? infoSource.name : '书源信息'">
+      <view v-if="infoSource" class="info-source">
+        <view class="info-source-head">
+          <view class="source-mark" :class="{ builtin: infoSource.builtin }">
+            <text class="serif">{{ infoSource.name.slice(0, 1) }}</text>
+          </view>
+          <view class="info-source-copy">
+            <text class="info-source-name">{{ infoSource.name }}</text>
+            <text class="info-source-desc">{{ sourceDescription(infoSource) }}</text>
+          </view>
+          <view class="info-source-badge" :class="{ off: infoSource.enabled === false }">
+            {{ infoSource.enabled === false ? '已停用' : '可用' }}
+          </view>
+        </view>
+
+        <view class="info-rows">
+          <view class="info-row">
+            <text class="info-key">书源类型</text>
+            <text class="info-value">{{ sourceKindText(infoSource) }}</text>
+          </view>
+          <view class="info-row">
+            <text class="info-key">更新方式</text>
+            <text class="info-value">{{ infoSource.builtin ? '随应用或书源库自动更新' : '手动维护' }}</text>
+          </view>
+          <view class="info-row">
+            <text class="info-key">支持内容</text>
+            <text class="info-value">搜索 · 详情 · 目录 · 正文</text>
+          </view>
+        </view>
+
+        <view class="info-switch-row">
+          <view class="info-switch-copy">
+            <text class="info-switch-title">参与书籍搜索</text>
+            <text class="info-switch-desc">关闭后不会在书城向该书源发请求</text>
+          </view>
+          <switch
+            :checked="infoSource.enabled !== false"
+            color="#2f5d50"
+            @change="onToggle(infoSource, $event)"
+          />
+        </view>
+
+        <view v-if="showAdvanced" class="info-advanced">
+          <text class="info-advanced-label">高级操作</text>
+          <view class="info-advanced-actions">
+            <view v-if="!infoSource.direct" class="info-advanced-btn" @tap="openTest(infoSource)">体检</view>
+            <view class="info-advanced-btn" @tap="editSource(infoSource)">编辑规则</view>
+            <view class="info-advanced-btn" @tap="copySource(infoSource)">复制 JSON</view>
+            <view class="info-advanced-btn danger" @tap="removeSource(infoSource)">删除</view>
+          </view>
+        </view>
+
+        <view class="sheet-primary" @tap="showSourceInfo = false">完成</view>
+      </view>
+    </BottomSheet>
   </view>
 </template>
 
@@ -341,6 +396,9 @@ const testKeyword = ref('万相之王')
 const testing = ref(false)
 const testReport = ref(null)
 const testProgressText = ref('')
+const showAdvanced = ref(false)
+const showSourceInfo = ref(false)
+const infoSource = ref(null)
 const settings = ref(loadSettings())
 const repoState = ref(null)
 const repoSyncing = ref(false)
@@ -356,7 +414,6 @@ const isH5 = (() => {
 })()
 
 const enabledCount = computed(() => sources.value.filter((source) => source.enabled !== false).length)
-const customCount = computed(() => sources.value.filter((source) => !source.builtin).length)
 const repoConfig = computed(() => getSourceRepoConfig(settings.value))
 const repoConfigured = computed(() => isSourceRepoConfigured(repoConfig.value))
 const repoDesc = computed(() => {
@@ -364,6 +421,11 @@ const repoDesc = computed(() => {
   const state = repoState.value
   if (!state) return '已配置，尚未同步'
   return `${state.manifestName || '书源库'} · v${state.version || 1} · ${state.lastSyncAt ? '上次同步 ' + formatDate(state.lastSyncAt) : '尚未同步'}`
+})
+const repoLastSyncText = computed(() => {
+  const state = repoState.value
+  if (!state || !state.lastSyncAt) return '尚未同步'
+  return `上次同步 ${formatDate(state.lastSyncAt)}`
 })
 const repoMeta = computed(() => {
   if (!repoConfigured.value) return '支持 GitHub / Gitee / 静态 index.json'
@@ -376,6 +438,10 @@ function load() {
   sources.value = ensureSources()
   settings.value = loadSettings()
   repoState.value = loadSourceRepoState()
+  if (infoSource.value) {
+    infoSource.value = sources.value.find((source) => source.id === infoSource.value.id) || null
+    if (!infoSource.value) showSourceInfo.value = false
+  }
 }
 
 function formatDate(value) {
@@ -420,6 +486,43 @@ function goDirect() {
   uni.navigateTo({ url: '/pages/direct/direct' })
 }
 
+function sourceDescription(source) {
+  if (!source) return ''
+  if (source.description) return source.description
+  const fallback = {
+    'builtin-85zw': '玄幻、都市等常见小说，目录与正文完整。',
+    'builtin-quanben': '完本小说较多，使用 AMP 完整目录，适合作为备用源。',
+    'builtin-biqvge99': '搜索速度较快，目录与正文完整。',
+    'builtin-yoboi': '收录较多，首次搜索稍慢，适合备用。',
+    'builtin-gutenberg': '公版经典与英文原著，单本全文阅读。'
+  }
+  return fallback[source.id] || (source.group ? source.group + '书源，点击查看详情' : '书源已就绪')
+}
+
+function sourceKindText(source) {
+  if (source.searchMode === 'crawl-index') return '分类索引搜索'
+  if (source.direct) return '仅链接解析'
+  if (source.type === 'json') return '接口书源'
+  return '网页书源'
+}
+
+function openSourceInfo(source) {
+  infoSource.value = source
+  showSourceInfo.value = true
+}
+
+function handleSourceLongPress(source) {
+  if (showAdvanced.value) showSourceMenu(source)
+  else openSourceInfo(source)
+}
+
+function toggleAdvanced() {
+  showAdvanced.value = !showAdvanced.value
+  if (showAdvanced.value) {
+    toast('已显示高级工具，普通读者可以忽略')
+  }
+}
+
 function editSource(source) {
   uni.navigateTo({ url: '/pages/source-edit/source-edit?id=' + encodeURIComponent(source.id) })
 }
@@ -429,6 +532,7 @@ function onToggle(source, event) {
   toggleSource(source.id, !!value)
   source.enabled = !!value
   sources.value = [...sources.value]
+  if (infoSource.value && infoSource.value.id === source.id) infoSource.value = { ...infoSource.value, enabled: !!value }
   toast(value ? '已启用 ' + source.name : '已停用 ' + source.name)
 }
 
@@ -1674,5 +1778,167 @@ onShow(load)
   font-size: 32rpx;
   color: var(--accent);
   line-height: 1;
+}
+
+.source-desc {
+  display: block;
+  margin-top: 5rpx;
+  max-width: 430rpx;
+  font-size: 20rpx;
+  color: var(--muted);
+}
+
+.source-reader-state {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 12rpx 0 18rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+
+.state-dot {
+  width: 9rpx;
+  height: 9rpx;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-right: 8rpx;
+}
+
+.state-dot.on {
+  background: #5c8a6f;
+  box-shadow: 0 0 0 4rpx rgba(92, 138, 111, 0.12);
+}
+
+.advanced-link {
+  color: var(--muted);
+  padding: 8rpx 0 8rpx 16rpx;
+}
+
+.info-source-head {
+  display: flex;
+  align-items: center;
+  padding-bottom: 22rpx;
+  border-bottom: 1rpx solid var(--line);
+}
+
+.info-source-copy {
+  flex: 1;
+  min-width: 0;
+  margin-left: 18rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.info-source-name {
+  font-size: 28rpx;
+  color: var(--ink);
+}
+
+.info-source-desc {
+  margin-top: 4rpx;
+  font-size: 20rpx;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.info-source-badge {
+  font-size: 18rpx;
+  color: #4c7a60;
+  background: rgba(92, 138, 111, 0.1);
+  border-radius: 999rpx;
+  padding: 4rpx 12rpx;
+  flex-shrink: 0;
+}
+
+.info-source-badge.off {
+  color: var(--muted);
+  background: rgba(37, 42, 36, 0.05);
+}
+
+.info-rows {
+  padding: 10rpx 0;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+}
+
+.info-key {
+  width: 150rpx;
+  font-size: 21rpx;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.info-value {
+  flex: 1;
+  font-size: 22rpx;
+  color: var(--ink-soft);
+}
+
+.info-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--line);
+}
+
+.info-switch-copy {
+  flex: 1;
+  min-width: 0;
+  margin-right: 16rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.info-switch-title {
+  font-size: 23rpx;
+  color: var(--ink-soft);
+}
+
+.info-switch-desc {
+  margin-top: 2rpx;
+  font-size: 19rpx;
+  color: var(--muted);
+}
+
+.info-advanced {
+  margin-top: 8rpx;
+  padding-top: 16rpx;
+  border-top: 1rpx dashed var(--line);
+}
+
+.info-advanced-label {
+  font-size: 19rpx;
+  letter-spacing: 2rpx;
+  color: var(--muted);
+}
+
+.info-advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 12rpx;
+}
+
+.info-advanced-btn {
+  height: 58rpx;
+  padding: 0 20rpx;
+  border-radius: 999rpx;
+  border: 1rpx solid var(--line);
+  display: flex;
+  align-items: center;
+  font-size: 21rpx;
+  color: var(--ink-soft);
+  margin: 0 10rpx 10rpx 0;
+}
+
+.info-advanced-btn.danger {
+  color: var(--accent);
+  border-color: rgba(168, 73, 58, 0.2);
 }
 </style>

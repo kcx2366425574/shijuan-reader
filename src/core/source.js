@@ -131,6 +131,7 @@ export function normalizeSource(raw, options = {}) {
   }
 
   const name = String(input.name || input.bookSourceName || '').trim()
+  const description = String(input.description || '').trim().slice(0, 160)
   const url = normalizeUrlBase(input.url || input.bookSourceUrl || '')
   const group = String(input.group || input.bookSourceGroup || '自定义').split(/[,，]/)[0].trim() || '自定义'
   const charset = normalizeCharset(input.charset || 'auto')
@@ -144,6 +145,7 @@ export function normalizeSource(raw, options = {}) {
   const source = {
     id: String(input.id || '').trim(),
     name: name || '未命名书源',
+    description,
     url,
     group,
     enabled: input.enabled !== false && input.bookSourceEnabled !== false,
@@ -262,6 +264,7 @@ export function validateSource(source) {
 export function exportSource(source) {
   return {
     bookSourceName: source.name,
+    description: source.description || '',
     bookSourceUrl: source.url,
     bookSourceGroup: source.group,
     bookSourceType: 0,
