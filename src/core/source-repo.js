@@ -223,7 +223,7 @@ export function clearSourceRepoState() {
  * 同步书源仓库。
  */
 export async function syncSourceRepo(settings, options = {}) {
-  const config = getSourceRepoConfig(settings)
+  const config = options.config || getSourceRepoConfig(settings)
   if (!isSourceRepoConfigured(config)) {
     throw new SourceRepoError('尚未配置书源仓库', 'config')
   }

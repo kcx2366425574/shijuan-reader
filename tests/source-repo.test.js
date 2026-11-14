@@ -141,7 +141,7 @@ test('引擎版本更高时给出警告', async () => {
 test('未配置仓库时给出明确错误', async () => {
   __resetMemoryStorage()
   await assert.rejects(
-    () => syncSourceRepo({}, { fetchText: async () => ({ text: '{}' }) }),
+    () => syncSourceRepo({}, { config: { provider: 'github', repo: '', branch: 'main', manifestUrl: '', autoSync: true }, fetchText: async () => ({ text: '{}' }) }),
     /尚未配置书源仓库/
   )
 })
