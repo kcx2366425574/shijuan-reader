@@ -303,6 +303,8 @@ const book = ref({ name: '阅读' })
 const source = ref(null)
 const chapters = ref([])
 const currentIndex = ref(0)
+const pendingIndex = ref(null)
+const queuedIndex = ref(null)
 const chapterTitle = ref('')
 const paragraphs = ref([])
 const loadingBook = ref(true)
@@ -451,9 +453,18 @@ async function loadChapter(index, options = {}) {
     toast(index < 0 ? '已经是第一章' : '已经是最后一章')
     return
   }
-  if (loadingChapter.value) return
+  if (loadingChapter.value) {
+    if (pendingIndex.value === index) {
+      toast('这一章正在加载，请稍候')
+      return
+    }
+    queuedIndex.value = index
+    toast('正在加载，完成后自动跳转')
+    return
+  }
   loadingChapter.value = true
   chapterError.value = ''
+  pendingIndex.value = index
   const chapter = chapters.value[index]
   const restoreChapter = options.restore && book.value.progress && book.value.progress.chapterIndex === index
   if (!restoreChapter) {
@@ -472,6 +483,7 @@ async function loadChapter(index, options = {}) {
       }
     }
     currentIndex.value = index
+    pendingIndex.value = null
     chapterTitle.value = result.title || chapter.name
     paragraphs.value = splitParagraphs(result.content)
     chapterReady.value = true
@@ -494,12 +506,23 @@ async function loadChapter(index, options = {}) {
     saveProgress(true)
     showChromeTemporarily()
     prefetchNext(index)
+    runQueuedChapter()
   } catch (e) {
     loadingChapter.value = false
     chapterError.value = e && e.message ? e.message : '这一章加载失败'
     chapterReady.value = true
     if (!paragraphs.value.length) chapters.value = chapters.value.slice()
+    runQueuedChapter()
   }
+}
+
+function runQueuedChapter() {
+  const target = queuedIndex.value
+  queuedIndex.value = null
+  if (target === null || target === currentIndex.value) return
+  setTimeout(() => {
+    if (!loadingChapter.value) loadChapter(target)
+  }, 40)
 }
 
 function prefetchNext(index) {
@@ -611,7 +634,9 @@ function retryInit() {
 }
 
 function retryChapter() {
-  loadChapter(currentIndex.value, { restore: false })
+  const target = pendingIndex.value !== null ? pendingIndex.value : currentIndex.value
+  pendingIndex.value = null
+  loadChapter(target, { restore: false })
 }
 
 function goBack() {
