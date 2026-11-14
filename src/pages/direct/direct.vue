@@ -118,7 +118,7 @@ import { fetchText, openBook } from '../../core/service.js'
 import { parseHTML } from '../../core/html.js'
 import { normalizeSource, hashCode } from '../../core/source.js'
 import { cacheBook } from '../../core/book-cache.js'
-import { toast, toastSuccess } from '../../utils/format.js'
+import { toast, toastSuccess, firstReadableIndex } from '../../utils/format.js'
 
 const bookUrl = ref('')
 const detecting = ref(false)
@@ -280,7 +280,7 @@ function startReading() {
   })
   const savedIndex = existing && existing.progress && Number.isInteger(existing.progress.chapterIndex)
     ? existing.progress.chapterIndex
-    : 0
+    : firstReadableIndex(chapters)
   toastSuccess(existing ? '继续阅读' : '已加入书架')
   uni.navigateTo({
     url: `/pages/reader/reader?bookId=${encodeURIComponent(bookId)}&chapter=${savedIndex}`

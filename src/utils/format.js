@@ -134,6 +134,12 @@ export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
 
+export function firstReadableIndex(chapters) {
+  if (!chapters || !chapters.length) return 0
+  const first = String((chapters[0] && chapters[0].name) || '')
+  return /新书感言|上架感言|完本感言|请假条|作品相关/.test(first) && chapters.length > 1 ? 1 : 0
+}
+
 export function splitParagraphs(text) {
   return String(text || '')
     .split(/\n+/)

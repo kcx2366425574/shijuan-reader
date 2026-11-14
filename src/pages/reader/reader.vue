@@ -292,7 +292,7 @@ import {
 import { getCachedBook, cacheBook } from '../../core/book-cache.js'
 import { openBook, getChapterContent } from '../../core/service.js'
 import { READER_THEMES, THEME_LIST, getTheme } from '../../core/theme.js'
-import { splitParagraphs, toast, pad2, clamp } from '../../utils/format.js'
+import { splitParagraphs, toast, pad2, clamp, firstReadableIndex } from '../../utils/format.js'
 
 const chapterContentCache = new Map()
 const prefetching = new Set()
@@ -594,6 +594,7 @@ async function init() {
   let index = 0
   if (Number.isInteger(requested) && requested >= 0) index = requested
   else if (book.value.progress && Number.isInteger(book.value.progress.chapterIndex)) index = book.value.progress.chapterIndex
+  else index = firstReadableIndex(chapters.value)
   index = clamp(index, 0, chapters.value.length - 1)
   loadingBook.value = false
   await loadChapter(index, { restore: true })

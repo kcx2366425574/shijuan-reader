@@ -193,7 +193,7 @@ import { getCachedBook, cacheBook } from '../../core/book-cache.js'
 import { takeHandoff } from '../../core/handoff.js'
 import { openBook } from '../../core/service.js'
 import { searchAllSources, groupSearchResults } from '../../core/service.js'
-import { copyText, toast, toastSuccess, pad2 } from '../../utils/format.js'
+import { copyText, toast, toastSuccess, pad2, firstReadableIndex } from '../../utils/format.js'
 
 const params = ref({})
 const sources = ref([])
@@ -221,7 +221,7 @@ const readIndex = computed(() => {
   if (progress.value && Number.isInteger(progress.value.chapterIndex) && progress.value.chapterIndex < chapters.value.length) {
     return progress.value.chapterIndex
   }
-  return 0
+  return firstReadableIndex(chapters.value)
 })
 
 const readButtonText = computed(() => {
