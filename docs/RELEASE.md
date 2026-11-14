@@ -17,14 +17,19 @@
 3. 发行 → 原生 App 云打包 → Android：
    - 使用自有证书或 DCloud 公共测试证书
    - 记录包名、版本号
-4. 如需热更新，额外生成 WGT 资源包（App 资源升级包）。WGT 要求版本基线一致，跨大版本仍建议整包 APK。
+4. **APK 必须先重命名再上传**。HBuilderX 默认输出在 `dist/release/apk/`，文件形如 `__UNI__E05B11F__20261115024243.apk`；统一改为：
+   ```text
+   <项目slug>-v<versionName>-<versionCode>.apk
+   ```
+   本项目示例：`shijuan-v1.0.1-101.apk`。任何项目、任何 APK 都不得直接使用 HBuilderX 默认文件名交付。
+5. 如需热更新，额外生成 WGT 资源包（App 资源升级包）。WGT 要求版本基线一致，跨大版本仍建议整包 APK。
 
 ## 三、发布到 GitHub / Gitee Release
 
 1. 推送代码并打 tag：`v1.0.1`
 2. 创建 Release，上传：
-   - `shijuan-1.0.1.apk`（必须）
-   - `shijuan-1.0.1.wgt`（可选）
+   - `shijuan-v1.0.1-101.apk`（必须）
+   - `shijuan-v1.0.1-101.wgt`（可选）
 3. 正文示例：
 
 ```text
@@ -55,7 +60,7 @@ https://cdn.jsdelivr.net/gh/owner/repo@main/update.json
   "versionName": "1.0.1",
   "versionCode": 101,
   "notes": "修复若干问题",
-  "apkUrl": "https://github.com/owner/repo/releases/download/v1.0.1/shijuan-1.0.1.apk",
+  "apkUrl": "https://github.com/owner/repo/releases/download/v1.0.1/shijuan-v1.0.1-101.apk",
   "wgtUrl": "",
   "pageUrl": "https://github.com/owner/repo/releases/tag/v1.0.1",
   "force": false,
@@ -69,7 +74,7 @@ https://cdn.jsdelivr.net/gh/owner/repo@main/update.json
 ```bash
 node tools/make-update-json.mjs \
   --version 1.0.1 --code 101 \
-  --apk https://example.com/shijuan-1.0.1.apk \
+  --apk https://example.com/shijuan-v1.0.1-101.apk \
   --notes "修复若干问题" \
   --out update.json
 ```
