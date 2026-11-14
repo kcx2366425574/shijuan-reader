@@ -1,16 +1,112 @@
 {
-	"pages": [ //pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
-		{
-			"path": "pages/index/index",
-			"style": {
-				"navigationBarTitleText": "uni-app"
-			}
-		}
-	],
-	"globalStyle": {
-		"navigationBarTextStyle": "black",
-		"navigationBarTitleText": "uni-app",
-		"navigationBarBackgroundColor": "#F8F8F8",
-		"backgroundColor": "#F8F8F8"
-	}
+  "pages": [
+    {
+      "path": "pages/shelf/shelf",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "书架"
+      }
+    },
+    {
+      "path": "pages/discover/discover",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "书城"
+      }
+    },
+    {
+      "path": "pages/sources/sources",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "书源"
+      }
+    },
+    {
+      "path": "pages/mine/mine",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/book/book",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "书籍详情",
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/reader/reader",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "阅读",
+        "disableScroll": true,
+        "app-plus": {
+          "bounce": "none"
+        }
+      }
+    },
+    {
+      "path": "pages/source-edit/source-edit",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "书源编辑"
+      }
+    },
+    {
+      "path": "pages/source-detect/source-detect",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "智能识别书源"
+      }
+    },
+    {
+      "path": "pages/direct/direct",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "链接添加"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationStyle": "custom",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "拾卷",
+    "navigationBarBackgroundColor": "#f6f1e5",
+    "backgroundColor": "#f6f1e5",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#8e8778",
+    "selectedColor": "#2f5d50",
+    "backgroundColor": "#fbf7ee",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/shelf/shelf",
+        "text": "书架",
+        "iconPath": "static/tabbar/shelf.png",
+        "selectedIconPath": "static/tabbar/shelf-active.png"
+      },
+      {
+        "pagePath": "pages/discover/discover",
+        "text": "书城",
+        "iconPath": "static/tabbar/discover.png",
+        "selectedIconPath": "static/tabbar/discover-active.png"
+      },
+      {
+        "pagePath": "pages/sources/sources",
+        "text": "书源",
+        "iconPath": "static/tabbar/sources.png",
+        "selectedIconPath": "static/tabbar/sources-active.png"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的",
+        "iconPath": "static/tabbar/mine.png",
+        "selectedIconPath": "static/tabbar/mine-active.png"
+      }
+    ]
+  }
 }
