@@ -158,3 +158,52 @@ test('配置合并：settings 覆盖默认值', () => {
   assert.equal(config.branch, 'master')
   assert.equal(config.autoSync, false)
 })
+
+test('同步优化：未变化条目跳过、引擎不兼容不覆盖、下架标记', async () => {
+  __resetMemoryStorage()
+  ensureSources()
+  clearSourceRepoState()
+  const v1 = {
+    name: '优化源库',
+    version: 1,
+    engine: 1,
+    sources: [
+      { id: 'repo-a', name: 'A', version: 1, source: { ...basicSource, bookSourceName: 'A 源', bookSourceUrl: 'https://a.example.com' } },
+      { id: 'repo-b', name: 'B', version: 1, source: { ...basicSource, bookSourceName: 'B 源', bookSourceUrl: 'https://b.example.com' } }
+    ]
+  }
+  const manifestFetcher = (manifest) => async (url) => ({
+    text: JSON.stringify(url.endsWith('index.json') ? manifest : basicSource),
+    charset: 'utf-8',
+    status: 200,
+    headers: {},
+    url
+  })
+  const first = await syncSourceRepo({ sourceRepoManifestUrl: 'https://cdn.example.com/index.json' }, { fetchText: manifestFetcher(v1) })
+  assert.equal(first.added, 2)
+  assert.equal(first.skipped, 0)
+
+  const second = await syncSourceRepo({ sourceRepoManifestUrl: 'https://cdn.example.com/index.json' }, {
+    fetchText: async (url) => {
+      if (!url.endsWith('index.json')) throw new Error('未变化条目不应重新拉取')
+      return { text: JSON.stringify(v1), charset: 'utf-8', status: 200, headers: {}, url }
+    }
+  })
+  assert.equal(second.skipped, 2)
+  assert.equal(second.added, 0)
+  assert.equal(second.updated, 0)
+
+  // 引擎版本更高：保留现有书源
+  const incompatible = { ...v1, version: 2, engine: 99, sources: [{ id: 'repo-a', name: 'A', version: 2, source: { ...basicSource, bookSourceName: '不应覆盖', bookSourceUrl: 'https://a.example.com' } }] }
+  const engineReport = await syncSourceRepo({ sourceRepoManifestUrl: 'https://cdn.example.com/index.json' }, { fetchText: manifestFetcher(incompatible) })
+  assert.equal(engineReport.skippedEngine, true)
+  assert.equal(loadSources().find((source) => source.id === 'repo-a').name, 'A 源')
+
+  // 下架：清单移除 repo-b
+  const v2 = { ...v1, version: 3, sources: [v1.sources[0]] }
+  const retireReport = await syncSourceRepo({ sourceRepoManifestUrl: 'https://cdn.example.com/index.json' }, { fetchText: manifestFetcher(v2) })
+  assert.equal(retireReport.retired, 1)
+  const retired = loadSources().find((source) => source.id === 'repo-b')
+  assert.equal(retired.retired, true)
+  assert.equal(retired.enabled, false)
+})

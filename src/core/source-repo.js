@@ -237,9 +237,6 @@ export async function syncSourceRepo(settings, options = {}) {
     ? `该书源库需要拾卷引擎 ${manifest.engine}，当前引擎 ${SOURCE_ENGINE_VERSION}，部分规则可能无法使用。`
     : ''
 
-  const local = loadSources()
-  const map = new Map(local.map((source) => [source.id, source]))
-  const byUrl = new Map(local.filter((source) => source.builtin || source.fromRepo).map((source) => [source.url, source]))
   const report = {
     ok: true,
     manifestName: manifest.name,
@@ -248,25 +245,94 @@ export async function syncSourceRepo(settings, options = {}) {
     warning,
     added: 0,
     updated: 0,
+    skipped: 0,
+    retired: 0,
     failed: 0,
     errors: [],
     sources: [],
     elapsed: 0
   }
 
+  // 引擎版本更高时保留现有可用书源，避免用不兼容规则覆盖
+  if (manifest.engine > SOURCE_ENGINE_VERSION) {
+    const previous = loadState() || {}
+    const state = {
+      ...previous,
+      config,
+      manifestName: manifest.name,
+      engine: manifest.engine,
+      manifestUrl: manifest.manifestUrl,
+      lastCheckAt: Date.now(),
+      engineWarning: warning
+    }
+    saveState(state)
+    report.skippedEngine = true
+    report.state = state
+    report.elapsed = Date.now() - startedAt
+    progress('done', '书源库需要更高引擎版本，已保留现有书源')
+    return report
+  }
+
+  const local = loadSources()
+  const map = new Map(local.map((source) => [source.id, source]))
+  const byUrl = new Map(local.filter((source) => source.builtin || source.fromRepo).map((source) => [source.url, source]))
+
   const ids = new Set(local.map((source) => source.id))
+  const seenRepoIds = new Set()
+
+  const skippedEntry = (entry) => {
+    if (!entry.id || !(Number(entry.version) > 0)) return null
+    const existing = map.get(entry.id)
+    if (!existing) return null
+    return existing.fromRepo === true &&
+      existing.repoManifestUrl === manifest.manifestUrl &&
+      Number(existing.remoteVersion) === Number(entry.version) &&
+      !existing.retired
+      ? existing
+      : null
+  }
+
+  const fetched = new Map()
+  const fetchTasks = []
   for (let i = 0; i < manifest.entries.length; i++) {
     const entry = manifest.entries[i]
-    progress('source', `正在同步 ${i + 1}/${manifest.entries.length}${entry.name ? ' · ' + entry.name : ''}…`)
-    let list = []
-    try {
-      list = await fetchSourceEntry(entry, manifest, fetcher)
-    } catch (e) {
-      report.failed++
-      report.errors.push((entry.name || entry.path || `第 ${i + 1} 项`) + '：' + e.message)
+    const existing = skippedEntry(entry)
+    if (existing) {
+      report.skipped++
+      seenRepoIds.add(existing.id)
+      report.sources.push({ id: existing.id, name: existing.name, enabled: existing.enabled !== false })
       continue
     }
-    for (const raw of list) {
+    if (entry.id) seenRepoIds.add(entry.id)
+    fetchTasks.push({ index: i, entry })
+  }
+
+  // 并发拉取有变化的书源文件；合并仍按清单顺序执行
+  let fetchCursor = 0
+  const fetchConcurrency = Math.max(1, Math.min(4, Number(options.concurrency) || 3))
+  async function fetchWorker() {
+    while (fetchCursor < fetchTasks.length) {
+      const task = fetchTasks[fetchCursor++]
+      progress('source', `正在拉取 ${fetchCursor}/${fetchTasks.length}${task.entry.name ? ' · ' + task.entry.name : ''}…`)
+      try {
+        fetched.set(task.index, { list: await fetchSourceEntry(task.entry, manifest, fetcher) })
+      } catch (e) {
+        fetched.set(task.index, { error: e })
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(fetchConcurrency, Math.max(1, fetchTasks.length)) }, () => fetchWorker()))
+
+  for (let i = 0; i < manifest.entries.length; i++) {
+    const entry = manifest.entries[i]
+    const fetchedItem = fetched.get(i)
+    if (!fetchedItem) continue
+    if (fetchedItem.error) {
+      report.failed++
+      report.errors.push((entry.name || entry.path || `第 ${i + 1} 项`) + '：' + fetchedItem.error.message)
+      continue
+    }
+    for (const raw of fetchedItem.list) {
       const normalized = normalizeSource(raw)
       if (!normalized.valid) {
         report.failed++
@@ -292,14 +358,24 @@ export async function syncSourceRepo(settings, options = {}) {
       normalized.repoManifestUrl = manifest.manifestUrl
       normalized.remoteVersion = entry.version || manifest.version
       normalized.syncedAt = Date.now()
+      normalized.retired = false
       if (existing) report.updated++
       else {
         report.added++
         ids.add(id)
       }
+      seenRepoIds.add(id)
       map.set(id, normalized)
       byUrl.set(normalized.url, normalized)
       report.sources.push({ id, name: normalized.name, enabled: normalized.enabled })
+    }
+  }
+
+  // 清单中移除的仓库书源标记为已下架，不静默保留为可用
+  for (const [id, source] of Array.from(map.entries())) {
+    if (source.fromRepo && source.repoManifestUrl === manifest.manifestUrl && !seenRepoIds.has(id) && !source.retired) {
+      map.set(id, { ...source, retired: true, enabled: false, syncedAt: Date.now() })
+      report.retired++
     }
   }
 
@@ -315,6 +391,8 @@ export async function syncSourceRepo(settings, options = {}) {
     report: {
       added: report.added,
       updated: report.updated,
+      skipped: report.skipped,
+      retired: report.retired,
       failed: report.failed
     }
   }

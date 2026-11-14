@@ -491,6 +491,7 @@ function goDirect() {
 
 function sourceDescription(source) {
   if (!source) return ''
+  if (source.retired) return '书源已下架，可删除或恢复内置源。'
   if (source.description) return source.description
   const fallback = {
     'builtin-85zw': '玄幻、都市等常见小说，目录与正文完整。',
@@ -760,7 +761,8 @@ async function syncRepo() {
     })
     repoState.value = loadSourceRepoState()
     load()
-    const lines = [`新增 ${report.added} 个 · 更新 ${report.updated} 个 · 失败 ${report.failed} 个`]
+    const lines = [`新增 ${report.added} 个 · 更新 ${report.updated} 个 · 跳过 ${report.skipped || 0} 个 · 失败 ${report.failed} 个`]
+    if (report.retired) lines.push(`下架 ${report.retired} 个书源`)
     if (report.warning) lines.push(report.warning)
     if (report.errors && report.errors.length) lines.push(report.errors.slice(0, 2).join('\n'))
     uni.showModal({
