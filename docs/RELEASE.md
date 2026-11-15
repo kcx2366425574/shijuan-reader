@@ -21,19 +21,19 @@
    ```text
    <项目slug>-v<versionName>-<versionCode>.apk
    ```
-   本项目示例：`shijuan-v1.0.2-102.apk`。任何项目、任何 APK 都不得直接使用 HBuilderX 默认文件名交付。
+   本项目示例：`shijuan-v1.0.3-103.apk`。任何项目、任何 APK 都不得直接使用 HBuilderX 默认文件名交付。
 5. 如需热更新，额外生成 WGT 资源包（App 资源升级包）。WGT 要求版本基线一致，跨大版本仍建议整包 APK。
 
 ## 三、发布到 GitHub / Gitee Release
 
-1. 推送代码并打 tag：`v1.0.2`
+1. 推送代码并打 tag：`v1.0.3`
 2. 创建 Release，上传：
-   - `shijuan-v1.0.2-102.apk`（必须）
-   - `shijuan-v1.0.2-102.wgt`（可选）
+   - `shijuan-v1.0.3-103.apk`（必须）
+   - `shijuan-v1.0.3-103.wgt`（可选）
 3. 正文示例：
 
 ```text
-versionCode: 102
+versionCode: 103
 - 修复书源同步失败的问题
 - 阅读器新增行距调节
 
@@ -57,12 +57,12 @@ https://cdn.jsdelivr.net/gh/owner/repo@main/update.json
 
 ```json
 {
-  "versionName": "1.0.2",
-  "versionCode": 102,
+  "versionName": "1.0.3",
+  "versionCode": 103,
   "notes": "修复若干问题",
-  "apkUrl": "https://github.com/owner/repo/releases/download/v1.0.2/shijuan-v1.0.2-102.apk",
+  "apkUrl": "https://github.com/owner/repo/releases/download/v1.0.3/shijuan-v1.0.3-103.apk",
   "wgtUrl": "",
-  "pageUrl": "https://github.com/owner/repo/releases/tag/v1.0.2",
+  "pageUrl": "https://github.com/owner/repo/releases/tag/v1.0.3",
   "force": false,
   "publishedAt": "2026-11-15",
   "size": 12345678
@@ -73,8 +73,8 @@ https://cdn.jsdelivr.net/gh/owner/repo@main/update.json
 
 ```bash
 node tools/make-update-json.mjs \
-  --version 1.0.2 --code 102 \
-  --apk https://example.com/shijuan-v1.0.2-102.apk \
+  --version 1.0.3 --code 103 \
+  --apk https://example.com/shijuan-v1.0.3-103.apk \
   --notes "修复若干问题" \
   --out update.json
 ```
