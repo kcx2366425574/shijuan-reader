@@ -65,9 +65,21 @@
         <text class="shelf-title serif">我的书架</text>
         <text class="shelf-sub">{{ shelf.length ? '按最近阅读排序' : '还没有藏书' }}</text>
       </view>
-      <view class="source-link" @tap="goSources" hover-class="press">
-        <text>书源 {{ enabledSources }}</text>
-        <text class="source-link-arrow">›</text>
+      <view class="shelf-head-actions">
+        <view
+          v-if="shelf.length"
+          class="update-link"
+          :class="{ busy: updatingAll }"
+          @tap="updateAll"
+          hover-class="press"
+        >
+          <text class="update-icon">↻</text>
+          <text>{{ updatingAll ? updateDone + '/' + shelf.length : '更新' }}</text>
+        </view>
+        <view class="source-link" @tap="goSources" hover-class="press">
+          <text>书源 {{ enabledSources }}</text>
+          <text class="source-link-arrow">›</text>
+        </view>
       </view>
     </view>
 
@@ -96,9 +108,18 @@
           <view v-if="book.progress" class="read-ribbon">
             <text>{{ progressPercent(book) }}%</text>
           </view>
+          <view
+            class="update-fab"
+            :class="{ busy: updatingIds[book.id] }"
+            @tap.stop="updateBook(book)"
+            hover-class="press"
+          >
+            <text>{{ updatingIds[book.id] ? '…' : '↻' }}</text>
+          </view>
         </view>
         <text class="grid-title ellipsis">{{ book.name }}</text>
         <text class="grid-author ellipsis">{{ book.author || '佚名' }}</text>
+        <text class="grid-latest ellipsis">{{ book.lastChapter || '暂无目录' }}</text>
         <view class="grid-meta">
           <view class="grid-progress">
             <view class="grid-progress-fill" :style="{ width: Math.max(4, progressPercent(book)) + '%' }" />
@@ -134,8 +155,10 @@ import {
   loadShelf,
   getContinueReading,
   removeShelfBook,
-  ensureSources
+  ensureSources,
+  updateShelfBook
 } from '../../core/store.js'
+import { refreshBookInfo } from '../../core/shelf-update.js'
 import {
   todayLabel,
   relativeTime,
@@ -150,6 +173,9 @@ const shelf = ref([])
 const continueBook = ref(null)
 const sources = ref([])
 const offlineMap = ref({})
+const updatingIds = ref({})
+const updatingAll = ref(false)
+const updateDone = ref(0)
 const today = todayLabel()
 let suppressTap = false
 
@@ -191,6 +217,77 @@ function openDetail(book) {
   uni.navigateTo({ url: '/pages/book/book?bookId=' + encodeURIComponent(book.id) })
 }
 
+function sourceForBook(book) {
+  return sources.value.find((item) => item.id === book.sourceId) || null
+}
+
+function applyRefresh(book, result) {
+  const info = result.info || {}
+  const patch = {
+    name: info.name || book.name,
+    author: info.author || book.author,
+    coverUrl: info.coverUrl || book.coverUrl,
+    intro: info.intro || book.intro,
+    kind: info.kind || book.kind,
+    status: info.status || book.status,
+    lastChapter: result.lastChapter || book.lastChapter,
+    chapterCount: result.chapterCount || book.chapterCount,
+    tocUrl: result.tocUrl || book.tocUrl,
+    newChapterCount: result.newChapterCount || 0,
+    updatedAt: Date.now()
+  }
+  updateShelfBook(book.id, patch)
+  Object.assign(book, patch)
+}
+
+async function updateBook(book, options = {}) {
+  if (updatingIds.value[book.id]) return { skipped: true }
+  const source = sourceForBook(book)
+  if (!source) {
+    if (!options.silent) toast('这本书的书源已被删除，无法更新')
+    return { failed: true }
+  }
+  updatingIds.value = { ...updatingIds.value, [book.id]: true }
+  try {
+    const result = await refreshBookInfo(source, book)
+    applyRefresh(book, result)
+    if (!options.silent) {
+      toast(result.hasNew
+        ? `《${book.name}》已更新，最新章节：${result.lastChapter}`
+        : `《${book.name}》已是最新，共 ${result.chapterCount} 章`)
+    }
+    return { ok: true, hasNew: result.hasNew, result }
+  } catch (e) {
+    if (!options.silent) toast((e && e.message) || '更新失败，请稍后重试')
+    return { failed: true, error: e }
+  } finally {
+    const next = { ...updatingIds.value }
+    delete next[book.id]
+    updatingIds.value = next
+  }
+}
+
+async function updateAll() {
+  if (updatingAll.value || !shelf.value.length) return
+  updatingAll.value = true
+  updateDone.value = 0
+  let changed = 0
+  let failed = 0
+  for (const book of [...shelf.value]) {
+    const outcome = await updateBook(book, { silent: true })
+    if (outcome.ok && outcome.hasNew) changed += 1
+    if (outcome.failed) failed += 1
+    updateDone.value += 1
+  }
+  updatingAll.value = false
+  load()
+  if (!failed) {
+    toast(changed ? `更新完成，${changed} 本有新章节` : '全部已是最新')
+  } else {
+    toast(`更新完成，${changed} 本有新章节，${failed} 本失败`)
+  }
+}
+
 function continueReading() {
   if (!continueBook.value) {
     goDiscover()
@@ -207,9 +304,11 @@ async function showBookMenu(book) {
   suppressTap = true
   setTimeout(() => { suppressTap = false }, 700)
   const hasProgress = !!book.progress
-  const items = [hasProgress ? '继续阅读' : '开始阅读', '书籍详情', '移出书架']
+  const items = [hasProgress ? '继续阅读' : '开始阅读', '更新最新章节', '书籍详情', '移出书架']
   const index = await actionSheet(items, book.name)
-  if (index === 0) {
+  if (index === 1) {
+    updateBook(book)
+  } else if (index === 0) {
     if (hasProgress) {
       uni.navigateTo({
         url: `/pages/reader/reader?bookId=${encodeURIComponent(book.id)}&chapter=${book.progress.chapterIndex || 0}`
@@ -217,9 +316,9 @@ async function showBookMenu(book) {
     } else {
       uni.navigateTo({ url: '/pages/book/book?bookId=' + encodeURIComponent(book.id) })
     }
-  } else if (index === 1) {
-    uni.navigateTo({ url: '/pages/book/book?bookId=' + encodeURIComponent(book.id) })
   } else if (index === 2) {
+    uni.navigateTo({ url: '/pages/book/book?bookId=' + encodeURIComponent(book.id) })
+  } else if (index === 3) {
     const ok = await confirmDialog({
       title: '移出书架',
       content: `确定把《${book.name}》移出书架吗？阅读进度也会一并清除。`,
@@ -523,12 +622,38 @@ onShow(load)
   letter-spacing: 1rpx;
 }
 
+.shelf-head-actions {
+  display: flex;
+  align-items: center;
+}
+
+.update-link {
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  margin-right: 18rpx;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(47, 94, 78, 0.08);
+  color: var(--jade);
+  font-size: 22rpx;
+}
+
+.update-link.busy {
+  opacity: 0.6;
+}
+
+.update-icon {
+  font-size: 26rpx;
+  line-height: 1;
+}
+
 .source-link {
   display: flex;
   align-items: center;
   font-size: 23rpx;
   color: var(--jade);
-  padding: 8rpx 0 8rpx 20rpx;
+  padding: 8rpx 0 8rpx 0;
 }
 
 .source-link-arrow {
@@ -555,6 +680,26 @@ onShow(load)
   height: 282rpx;
   position: relative;
   border-radius: 10rpx;
+}
+
+.update-fab {
+  position: absolute;
+  right: 10rpx;
+  bottom: 10rpx;
+  width: 48rpx;
+  height: 48rpx;
+  border-radius: 999rpx;
+  background: rgba(246, 241, 229, 0.9);
+  color: var(--jade);
+  font-size: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4rpx 12rpx rgba(20, 28, 24, 0.16);
+}
+
+.update-fab.busy {
+  opacity: 0.65;
 }
 
 .read-ribbon {
@@ -584,6 +729,12 @@ onShow(load)
   margin-top: 4rpx;
   font-size: 21rpx;
   color: var(--muted);
+}
+
+.grid-latest {
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: rgba(90, 96, 86, 0.72);
 }
 
 .grid-meta {
