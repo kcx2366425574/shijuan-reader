@@ -21,7 +21,7 @@ import { normalizeSource } from './source.js'
 import { loadSources, saveSources } from './store.js'
 import { resolveUrl } from './rule.js'
 
-export const SOURCE_ENGINE_VERSION = 1
+export const SOURCE_ENGINE_VERSION = 2
 const STATE_KEY = 'shijuan.sourceRepo.v1'
 const CHECK_INTERVAL = 12 * 60 * 60 * 1000
 const memory = new Map()

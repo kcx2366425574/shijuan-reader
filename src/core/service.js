@@ -14,7 +14,9 @@ import {
   extractBookInfo,
   extractChapterContent,
   extractChapters,
+  extractNextPageUrl,
   extractSearchResults,
+  extractValue,
   resolveUrl
 } from './rule.js'
 
@@ -724,6 +726,125 @@ function sameHost(urlA, urlB) {
   return host(urlA) === host(urlB)
 }
 
+function bookIdFromUrl(url) {
+  const matches = String(url || '').match(/\d{6,}/g)
+  return matches && matches.length ? matches[matches.length - 1] : ''
+}
+
+async function fetchTocPages(urls, source, referer, options) {
+  const results = new Array(urls.length).fill(null)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < urls.length) {
+      const index = cursor
+      cursor += 1
+      const url = urls[index]
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          results[index] = await fetchText(url, {
+            source,
+            referer,
+            stage: 'toc',
+            timeout: options.timeout
+          })
+          break
+        } catch (e) {
+          if (attempt === 1) results[index] = null
+        }
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(6, urls.length) }, worker)
+  await Promise.all(workers)
+  return results
+}
+
+async function loadTocChapters(source, tocUrl, target, targetPage, targetParsed, options) {
+  const tocRules = source.ruleToc || {}
+  const maxPages = Math.max(1, Math.min(100, Number(tocRules.maxPages) || 30))
+  const chapters = []
+  const seenChapterUrls = new Set()
+  const addChapters = (list) => {
+    for (const chapter of list) {
+      if (seenChapterUrls.has(chapter.url)) continue
+      seenChapterUrls.add(chapter.url)
+      chapters.push(chapter)
+    }
+  }
+
+  const firstPage = tocUrl === target
+    ? targetPage
+    : await fetchText(tocUrl, { source, referer: target, stage: 'toc', timeout: options.timeout })
+  const firstParsed = tocUrl === target
+    ? targetParsed
+    : parseDocument(firstPage.text, source, firstPage.contentType)
+  const firstChapters = extractChapters(firstParsed.doc, source, {
+    baseUrl: firstPage.url || tocUrl,
+    jsonRoot: firstParsed.jsonRoot
+  })
+  addChapters(firstChapters)
+  if (!firstChapters.length) return chapters
+
+  const totalText = tocRules.totalChapters
+    ? extractValue(firstParsed.doc, tocRules.totalChapters, {
+      baseUrl: firstPage.url || tocUrl,
+      field: 'totalChapters'
+    })
+    : ''
+  const totalCount = parseInt((String(totalText || '').match(/\d+/) || [])[0], 10) || 0
+  const pageCount = totalCount && firstChapters.length
+    ? Math.min(maxPages, Math.ceil(totalCount / firstChapters.length))
+    : 0
+
+  if (tocRules.pageUrl && pageCount > 1) {
+    const bookId = bookIdFromUrl(tocUrl) || bookIdFromUrl(target)
+    const pageUrls = []
+    for (let page = 2; page <= pageCount; page += 1) {
+      const template = buildTemplate(tocRules.pageUrl, {
+        page,
+        bookId,
+        tocId: bookId,
+        baseUrl: ensureBase(source)
+      }, 'utf-8')
+      const pageUrl = resolveUrl(tocUrl, template)
+      if (pageUrl) pageUrls.push(pageUrl)
+    }
+    const pages = await fetchTocPages(pageUrls, source, target, options)
+    for (const tocPage of pages) {
+      if (!tocPage) continue
+      const parsedPage = parseDocument(tocPage.text, source, tocPage.contentType)
+      addChapters(extractChapters(parsedPage.doc, source, {
+        baseUrl: tocPage.url || tocUrl,
+        jsonRoot: parsedPage.jsonRoot
+      }))
+    }
+    return chapters
+  }
+
+  // 没有页码模板时，沿 rel=next / 下一页链接顺序抓取
+  const seenPages = new Set([tocUrl])
+  let pageUrl = extractNextPageUrl(firstParsed.doc, tocRules.nextPage, firstPage.url || tocUrl)
+  for (let pageIndex = 1; pageIndex < maxPages && pageUrl; pageIndex += 1) {
+    if (seenPages.has(pageUrl)) break
+    seenPages.add(pageUrl)
+    let tocPage = null
+    try {
+      tocPage = await fetchText(pageUrl, { source, referer: target, stage: 'toc', timeout: options.timeout })
+    } catch (e) {
+      break
+    }
+    const parsedPage = parseDocument(tocPage.text, source, tocPage.contentType)
+    const pageChapters = extractChapters(parsedPage.doc, source, {
+      baseUrl: tocPage.url || pageUrl,
+      jsonRoot: parsedPage.jsonRoot
+    })
+    if (!pageChapters.length) break
+    addChapters(pageChapters)
+    pageUrl = extractNextPageUrl(parsedPage.doc, tocRules.nextPage, tocPage.url || pageUrl)
+  }
+  return chapters
+}
+
 /**
  * 打开书籍：抓详情页，再抓目录页。
  */
@@ -751,13 +872,8 @@ export async function openBook(source, bookUrl, fallback = {}, options = {}) {
   if (source.singleChapter) {
     chapters = [{ name: info.name || '全文', url: target }]
     tocUrl = target
-  } else if (tocUrl && tocUrl !== target) {
-    const tocPage = await fetchText(tocUrl, { source, referer: target, stage: 'toc', timeout: options.timeout })
-    const tocParsed = parseDocument(tocPage.text, source, tocPage.contentType)
-    chapters = extractChapters(tocParsed.doc, source, {
-      baseUrl: tocPage.url || tocUrl,
-      jsonRoot: tocParsed.jsonRoot
-    })
+  } else if (tocUrl) {
+    chapters = await loadTocChapters(source, tocUrl, target, page, parsed, options)
   }
   if (!chapters.length) {
     chapters = extractChapters(parsed.doc, source, {

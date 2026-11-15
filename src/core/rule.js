@@ -581,7 +581,7 @@ export function cleanBookField(value, type) {
 function fieldOptions(baseUrl, field, extra) {
   return Object.assign({
     baseUrl,
-    isUrl: ['bookUrl', 'coverUrl', 'tocUrl', 'chapterUrl', 'nextContentUrl'].indexOf(field) !== -1,
+    isUrl: ['bookUrl', 'coverUrl', 'tocUrl', 'chapterUrl', 'nextContentUrl', 'nextPage'].indexOf(field) !== -1,
     field
   }, extra || {})
 }
@@ -765,6 +765,12 @@ function guessTocUrl(doc, baseUrl) {
     }
   }
   return ''
+}
+
+export function extractNextPageUrl(doc, rule, baseUrl) {
+  const value = String(rule == null ? '' : rule).trim()
+  if (!value) return ''
+  return extractValue(doc, value, { baseUrl, field: 'nextPage', isUrl: true }) || ''
 }
 
 /**

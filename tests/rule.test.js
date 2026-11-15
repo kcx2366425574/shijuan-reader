@@ -11,6 +11,7 @@ import {
   extractSearchResults,
   extractBookInfo,
   extractChapters,
+  extractNextPageUrl,
   extractChapterContent,
   autoDetectContentElement,
   cleanChapterText,
@@ -151,6 +152,15 @@ test('提取书籍详情与目录 URL 回退', () => {
   assert.equal(info.coverUrl, 'https://img.example.com/cover.jpg')
   assert.equal(info.intro, '天地间，有万相。')
   assert.equal(info.tocUrl, 'https://www.85zw.com/book/1/')
+})
+
+test('目录下一页：支持 rel=next 并解析为绝对地址', () => {
+  const doc = parseHTML('<html><head><link rel="next" href="/book/indexList/1/2.html"></head><body></body></html>')
+  assert.equal(
+    extractNextPageUrl(doc, 'link[rel="next"]@href', 'https://book.example.com/book/indexList-1.html'),
+    'https://book.example.com/book/indexList/1/2.html'
+  )
+  assert.equal(extractNextPageUrl(doc, '', 'https://book.example.com/'), '')
 })
 
 test('目录去重保留最后一次出现，修复“最新章节+正文”顺序', () => {
