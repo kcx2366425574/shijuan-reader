@@ -126,9 +126,9 @@ test('导出为 Legado 风格字段', () => {
 test('搜索请求按书源编码构造', () => {
   const source = BUILTIN_SOURCES[0]
   const request = buildSearchRequest(source, '万相之王')
-  assert.equal(request.method, 'GET')
-  assert.ok(request.url.startsWith('https://www.85zw.com/s.php?q='))
-  assert.ok(request.url.includes('%E4%B8%87%E7%9B%B8%E4%B9%8B%E7%8E%8B'))
+  assert.equal(request.method, 'POST')
+  assert.equal(request.url, 'https://www.85zw.com/s.php?ie=gbk')
+  assert.equal(request.body, 'q=%E4%B8%87%E7%9B%B8%E4%B9%8B%E7%8E%8B')
 })
 
 test('响应文档自动识别 HTML 与 JSON', () => {

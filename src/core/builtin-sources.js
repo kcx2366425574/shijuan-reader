@@ -7,7 +7,7 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
-export const BUILTIN_CONFIG_VERSION = 3
+export const BUILTIN_CONFIG_VERSION = 4
 
 export const BUILTIN_SOURCES = [
   {
@@ -20,9 +20,9 @@ export const BUILTIN_SOURCES = [
     builtin: true,
     type: 'html',
     charset: 'gbk',
-    searchUrl: '/s.php?q={{key}}',
-    searchMethod: 'GET',
-    searchBody: '',
+    searchUrl: '/s.php?ie=gbk',
+    searchMethod: 'POST',
+    searchBody: 'q={{key}}',
     searchCharset: 'utf-8',
     ruleSearch: {
       bookList: '.bookbox',
