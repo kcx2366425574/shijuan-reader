@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { parseHTML, textContent } from '../src/core/html.js'
 import {
   resolveUrl,
+  decodeRouteValue,
   getJsonPath,
   buildTemplate,
   extractValue,
@@ -22,6 +23,14 @@ test('URL 解析与规整', () => {
   assert.equal(resolveUrl('https://www.85zw.com/book/1/', '../chapter/2.html'), 'https://www.85zw.com/book/chapter/2.html')
   assert.equal(resolveUrl('https://www.85zw.com/book/1/', '?page=2'), 'https://www.85zw.com/book/1/?page=2')
   assert.equal(resolveUrl('https://www.85zw.com/', 'javascript:void(0)'), '')
+})
+
+test('页面参数中的绝对地址可还原（一次或多次编码）', () => {
+  const url = 'https://www.85zw.com/book/19217200136/'
+  assert.equal(decodeRouteValue(url), url)
+  assert.equal(decodeRouteValue(encodeURIComponent(url)), url)
+  assert.equal(decodeRouteValue(encodeURIComponent(encodeURIComponent(url))), url)
+  assert.equal(decodeRouteValue(''), '')
 })
 
 test('JSON 路径：字段、数组、通配与递归', () => {

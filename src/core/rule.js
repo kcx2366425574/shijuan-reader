@@ -366,6 +366,19 @@ function normalizeUrl(baseUrl, value, allowEmpty) {
   return resolveUrl(baseUrl, text)
 }
 
+export function decodeRouteValue(value) {
+  let text = String(value == null ? '' : value)
+  // uni-app 页面参数可能保留一次或多次 URL 编码，绝对地址需还原后再解析
+  for (let i = 0; i < 2 && /^https?%(?:25)?3A/i.test(text); i += 1) {
+    try {
+      text = decodeURIComponent(text)
+    } catch (e) {
+      break
+    }
+  }
+  return text
+}
+
 export function resolveUrl(baseUrl, relative) {
   let rel = String(relative == null ? '' : relative).trim()
   if (!rel) return ''

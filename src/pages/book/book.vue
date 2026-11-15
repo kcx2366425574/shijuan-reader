@@ -194,6 +194,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
+import { decodeRouteValue } from '../../core/rule.js'
 import BookCover from '../../components/BookCover.vue'
 import BottomSheet from '../../components/BottomSheet.vue'
 import LoadingState from '../../components/LoadingState.vue'
@@ -824,7 +825,10 @@ async function performSwitch(offer) {
 }
 
 onLoad((options) => {
-  params.value = options || {}
+  const next = { ...(options || {}) }
+  next.sourceId = decodeRouteValue(next.sourceId)
+  next.bookUrl = decodeRouteValue(next.bookUrl)
+  params.value = next
   load(false)
 })
 
