@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { BUILTIN_SOURCES } from '../src/core/builtin-sources.js'
+
 import {
   __resetMemoryStorage,
   ensureSources,
@@ -27,18 +29,18 @@ import {
 test('首次启动写入内置书源，删除后不会被自动加回', () => {
   __resetMemoryStorage()
   const sources = ensureSources()
-  assert.equal(sources.length, 5)
+  assert.equal(sources.length, BUILTIN_SOURCES.length)
   assert.ok(sources.every((source) => source.builtin))
   const target = sources[0]
 
   deleteSource(target.id)
   const afterDelete = loadSources()
-  assert.equal(afterDelete.length, 4)
+  assert.equal(afterDelete.length, BUILTIN_SOURCES.length - 1)
   const again = ensureSources()
-  assert.equal(again.length, 4)
+  assert.equal(again.length, BUILTIN_SOURCES.length - 1)
 
   const restored = restoreBuiltinSources()
-  assert.equal(restored.length, 5)
+  assert.equal(restored.length, BUILTIN_SOURCES.length)
   assert.ok(restored.some((source) => source.id === target.id))
 })
 
@@ -51,7 +53,7 @@ test('书源启停与增量添加', () => {
   assert.equal(loadSources().find((s) => s.id === target.id).enabled, false)
 
   addSources([{ id: 'custom-1', name: '自定义', url: 'https://x.com', enabled: true }])
-  assert.equal(loadSources().length, 6)
+  assert.equal(loadSources().length, BUILTIN_SOURCES.length + 1)
 })
 
 test('书架：加入、更新信息、保留进度', () => {

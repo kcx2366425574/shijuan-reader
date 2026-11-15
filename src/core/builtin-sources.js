@@ -7,7 +7,7 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
-export const BUILTIN_CONFIG_VERSION = 4
+export const BUILTIN_CONFIG_VERSION = 5
 
 export const BUILTIN_SOURCES = [
   {
@@ -191,6 +191,57 @@ export const BUILTIN_SOURCES = [
     ruleContent: {
       title: 'h1',
       content: '#content'
+    },
+    replaceRules: [],
+    tocReverse: false,
+    singleChapter: false
+  },
+  {
+    id: 'builtin-washai',
+    description: '玄幻、都市等常见小说，目录分页自动合并，正文完整。',
+    name: '书海阁',
+    url: 'https://book.washai.net',
+    group: '小说',
+    enabled: true,
+    builtin: true,
+    type: 'html',
+    charset: 'utf-8',
+    searchUrl: '/book/bookclass.html?k={{key}}',
+    searchMethod: 'GET',
+    searchBody: '',
+    searchCharset: 'utf-8',
+    ruleSearch: {
+      bookList: '#bookList .classBookCard',
+      name: '.classBookTitle a',
+      author: '.classBookAuthor',
+      bookUrl: '.classBookTitle a@href',
+      coverUrl: '.classBookCoverLink img@src',
+      intro: '.classBookDesc',
+      kind: '.classCoverCat',
+      lastChapter: '.classBookChapter a'
+    },
+    ruleBookInfo: {
+      name: '#bookName',
+      author: '#bookAuthor',
+      coverUrl: 'meta[property="og:image"]@content',
+      intro: '#bookDesc',
+      kind: '.book-cat-badge',
+      status: '#bookStatus',
+      lastChapter: '#lastIndexLink',
+      tocUrl: '#allIndexLink@href'
+    },
+    ruleToc: {
+      chapterList: '#bookIndexList li',
+      chapterName: 'a@text##\\s*\\[免费\\]##',
+      chapterUrl: 'a@href',
+      nextPage: 'link[rel="next"]@href',
+      pageUrl: 'https://book.washai.net/book/indexList/{{bookId}}/{{page}}.html',
+      totalChapters: '#indexTitle',
+      maxPages: 40
+    },
+    ruleContent: {
+      title: '#indexName',
+      content: '#readPanel .readChapterAppendBody'
     },
     replaceRules: [],
     tocReverse: false,
