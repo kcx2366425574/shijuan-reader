@@ -198,6 +198,84 @@ async function requestBytes(url, options = {}) {
   }
 }
 
+function headerObject(raw) {
+  const headers = {}
+  String(raw || '').split(/\r?\n/).forEach((line) => {
+    const index = line.indexOf(':')
+    if (index > 0) headers[line.slice(0, index).trim().toLowerCase()] = line.slice(index + 1).trim()
+  })
+  return headers
+}
+
+function hasNativeXhr() {
+  return typeof plus !== 'undefined' && plus && plus.net && typeof plus.net.XMLHttpRequest === 'function'
+}
+
+/**
+ * App 端用 WebView 网络栈取文本。
+ *
+ * uni.request 在部分站点（如百度云加速后的 85zw）会被识别为无 SNI 的请求，
+ * 服务端直接返回 HTTP 400；plus.net.XMLHttpRequest 走 Chromium 网络栈，
+ * 可正常带 SNI、Cookie，并按响应头/页面 meta 解码 GBK。
+ */
+function nativeRequestText(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    const method = String(options.method || 'GET').toUpperCase()
+    const body = options.body == null ? '' : String(options.body)
+    const timeout = Math.max(3000, Number(options.timeout) || 25000)
+    let xhr
+    try {
+      xhr = new plus.net.XMLHttpRequest()
+    } catch (e) {
+      reject(new RequestError('网络组件初始化失败', {
+        url, stage: options.stage, sourceName: options.sourceName
+      }))
+      return
+    }
+    const fail = (message) => reject(new RequestError(message, {
+      url, stage: options.stage, sourceName: options.sourceName
+    }))
+    try {
+      xhr.open(method, url, true)
+      if (options.charset && options.charset !== 'auto') {
+        xhr.overrideMimeType('text/html; charset=' + options.charset)
+      }
+      const headers = options.headers || {}
+      Object.keys(headers).forEach((key) => {
+        try {
+          xhr.setRequestHeader(key, String(headers[key]))
+        } catch (e) {
+          // 个别请求头在 WebView 中不可设置，忽略即可
+        }
+      })
+      xhr.timeout = timeout
+      xhr.onload = () => {
+        const status = Number(xhr.status) || 0
+        const responseHeaders = headerObject(xhr.getAllResponseHeaders ? xhr.getAllResponseHeaders() : '')
+        const contentType = getHeader(responseHeaders, 'content-type')
+        resolve({
+          status,
+          headers: responseHeaders,
+          text: typeof xhr.responseText === 'string' ? xhr.responseText : '',
+          charset: charsetFromContentType(contentType) || options.charset || '',
+          url: xhr.responseURL || url
+        })
+      }
+      xhr.onerror = () => fail('网络请求失败')
+      xhr.ontimeout = () => fail('请求超时，请检查网络或稍后重试')
+      xhr.onabort = () => fail('请求已取消')
+      xhr.send(method === 'GET' || method === 'HEAD' ? null : body)
+    } catch (e) {
+      fail((e && e.message) || '网络请求失败')
+    }
+  })
+}
+
+function charsetFromContentType(contentType) {
+  const match = String(contentType || '').match(/charset\s*=\s*["']?([\w-]+)/i)
+  return match ? match[1].toLowerCase() : ''
+}
+
 function friendlyNetworkError(message) {
   const text = String(message || '')
   if (/timeout|timed out/i.test(text)) return '请求超时，请检查网络或稍后重试'
@@ -268,19 +346,32 @@ export async function fetchText(url, options = {}) {
     if (hit) return hit
   }
 
-  const response = await requestBytes(url, {
-    method,
-    body,
-    headers,
-    timeout: options.timeout,
-    stage: options.stage,
-    sourceName: source.name,
-    sourceUrl: source.url,
-    referer
-  })
+  const useNative = hasNativeXhr() && !isH5Runtime()
+  const response = useNative
+    ? await nativeRequestText(url, {
+      method,
+      body,
+      headers,
+      timeout: options.timeout,
+      stage: options.stage,
+      sourceName: source.name,
+      charset: options.charset || 'auto'
+    })
+    : await requestBytes(url, {
+      method,
+      body,
+      headers,
+      timeout: options.timeout,
+      stage: options.stage,
+      sourceName: source.name,
+      sourceUrl: source.url,
+      referer
+    })
 
   const contentType = getHeader(response.headers, 'content-type')
-  const { text, charset } = decodeResponse(response.bytes, contentType, source.charset || 'auto')
+  const { text, charset } = useNative
+    ? { text: response.text || '', charset: response.charset || '' }
+    : decodeResponse(response.bytes, contentType, source.charset || 'auto')
   if (response.status >= 400) {
     throw new RequestError(`网站返回 HTTP ${response.status}`, {
       url,
