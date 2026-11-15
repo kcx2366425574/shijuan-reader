@@ -734,7 +734,7 @@ async function switchSource() {
   switching.value = true
   try {
     const results = await searchAllSources(others, info.value.name, { concurrency: 3 })
-    const groups = groupSearchResults(results)
+    const groups = groupSearchResults(results, info.value.name)
     const normalized = String(info.value.name).replace(/[《》\s]/g, '')
     const matches = groups.filter((group) => {
       const name = String(group.name || '').replace(/[《》\s]/g, '')

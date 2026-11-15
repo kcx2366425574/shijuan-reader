@@ -396,7 +396,7 @@ async function runSearch() {
     })
     completedItems.set(item.source.id, item)
     completedCount.value = completedItems.size
-    groups.value = groupSearchResults(Array.from(completedItems.values()))
+    groups.value = groupSearchResults(Array.from(completedItems.values()), text)
   }
 
   try {
@@ -410,7 +410,7 @@ async function runSearch() {
     if (runId !== searchRunId.value || ignoreLateResults.value) return
     // 兜底：极快返回时 onSourceDone 可能早于状态初始化
     for (const item of results) applyItem(item)
-    groups.value = groupSearchResults(results)
+    groups.value = groupSearchResults(results, text)
   } catch (e) {
     if (!ignoreLateResults.value) toast(e && e.message ? e.message : '搜索失败')
   } finally {

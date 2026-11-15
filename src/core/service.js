@@ -875,11 +875,34 @@ function offerScore(offer) {
   return score
 }
 
+function normalizeSearchText(value) {
+  return String(value || '')
+    .replace(/[《》\s\-—_·:：,，.。!！?？、'"“”‘’]/g, '')
+    .toLowerCase()
+}
+
+function groupRelevance(group, keyword) {
+  const q = normalizeSearchText(keyword)
+  if (!q) return 0
+  const name = normalizeSearchText(group.name)
+  const author = normalizeSearchText(group.author)
+  const intro = normalizeSearchText(group.intro)
+  let score = 0
+  if (name === q) score += 1000
+  else if (name.startsWith(q)) score += 600
+  else if (name.includes(q)) score += 400
+  if (author === q) score += 300
+  else if (author.includes(q)) score += 150
+  if (intro.includes(q)) score += 50
+  if (name.includes(q)) score += Math.max(0, 40 - (name.length - q.length))
+  return score
+}
+
 /**
- * 聚合多个书源的搜索结果，按“书名 + 作者”分组，同组内按来源质量排序。
- * 默认直接使用质量最高的来源；其余来源保留作自动/手动换源备选。
+ * 聚合多个书源的搜索结果，按“书名 + 作者”分组，按搜索相关性排序，
+ * 同组内按来源质量排序。默认使用质量最高的来源；其余保留为备选。
  */
-export function groupSearchResults(items) {
+export function groupSearchResults(items, keyword = '') {
   const groups = new Map()
   for (const item of items || []) {
     for (const result of item.results || []) {
@@ -914,6 +937,11 @@ export function groupSearchResults(items) {
     }
   }
   const list = Array.from(groups.values())
+  const order = new Map(list.map((group, index) => [group, index]))
+  list.sort((a, b) => {
+    const diff = groupRelevance(b, keyword) - groupRelevance(a, keyword)
+    return diff !== 0 ? diff : order.get(a) - order.get(b)
+  })
   for (const group of list) {
     group.offers.sort((a, b) => offerScore(b) - offerScore(a))
     delete group.offerKeys

@@ -170,3 +170,18 @@ test('多源搜索结果按书名作者聚合', () => {
 test('Node 环境下图片代理地址保持原样', () => {
   assert.equal(proxiedUrl('https://img.example.com/a.jpg', 'https://x.com'), 'https://img.example.com/a.jpg')
 })
+
+test('聚合结果按搜索相关性排序', () => {
+  const groups = groupSearchResults([
+    {
+      source: { id: 's1', name: '源一' },
+      results: [
+        { name: '寿衣店的营业员', author: '三魂同体', bookUrl: 'https://a/1', sourceId: 's1', sourceName: '源一' },
+        { name: '人体诡话系列', author: '朱十三', bookUrl: 'https://a/2', sourceId: 's1', sourceName: '源一' },
+        { name: '三体', author: '刘慈欣', bookUrl: 'https://a/3', sourceId: 's1', sourceName: '源一' }
+      ]
+    }
+  ], '三体')
+  assert.equal(groups[0].name, '三体')
+  assert.ok(['寿衣店的营业员', '人体诡话系列'].includes(groups[1].name))
+})
