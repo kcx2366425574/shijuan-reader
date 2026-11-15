@@ -1,0 +1,5 @@
+#!/bin/sh
+# 提交前强制执行单元测试，避免把失败测试推到 CI
+set -e
+echo "[pre-commit] running npm test ..."
+npm test
