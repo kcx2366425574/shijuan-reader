@@ -7,7 +7,7 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
-export const BUILTIN_CONFIG_VERSION = 5
+export const BUILTIN_CONFIG_VERSION = 6
 
 export const BUILTIN_SOURCES = [
   {

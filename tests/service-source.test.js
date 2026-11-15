@@ -59,6 +59,30 @@ test('规范化 Legado 书源字段', () => {
   assert.ok(source.id.startsWith('user-'))
 })
 
+test('规范化保留目录分页字段与章节名正则转义', () => {
+  const source = normalizeSource({
+    bookSourceName: '分页源',
+    bookSourceUrl: 'https://example.com',
+    searchUrl: '/search?q={{key}}',
+    ruleSearch: { bookList: '.item', name: '.title', bookUrl: '.title@href' },
+    ruleToc: {
+      chapterList: '.chapter',
+      chapterName: 'a@text##\s*\[免费\]##',
+      chapterUrl: 'a@href',
+      nextPage: 'link[rel="next"]@href',
+      pageUrl: 'https://example.com/list/{{bookId}}/{{page}}.html',
+      totalChapters: '#total',
+      maxPages: 20
+    },
+    ruleContent: { content: '#content' }
+  })
+  assert.equal(source.ruleToc.nextPage, 'link[rel="next"]@href')
+  assert.equal(source.ruleToc.pageUrl, 'https://example.com/list/{{bookId}}/{{page}}.html')
+  assert.equal(source.ruleToc.totalChapters, '#total')
+  assert.equal(String(source.ruleToc.maxPages), '20')
+  assert.equal(source.ruleToc.chapterName, 'a@text##\s*\[免费\]##')
+})
+
 test('Legado searchUrl 尾部请求配置可解析', () => {
   const source = normalizeSource({
     bookSourceName: 'POST 源',

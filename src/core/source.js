@@ -11,7 +11,7 @@ export const SOURCE_GROUPS = ['小说', '文学', '古籍', '出版', '自定义
 
 const RULE_SEARCH_KEYS = ['bookList', 'name', 'author', 'bookUrl', 'coverUrl', 'intro', 'kind', 'lastChapter', 'wordCount']
 const RULE_BOOK_KEYS = ['name', 'author', 'coverUrl', 'intro', 'kind', 'status', 'lastChapter', 'tocUrl', 'wordCount']
-const RULE_TOC_KEYS = ['chapterList', 'chapterName', 'chapterUrl', 'reverse', 'isVolume']
+const RULE_TOC_KEYS = ['chapterList', 'chapterName', 'chapterUrl', 'nextPage', 'pageUrl', 'totalChapters', 'maxPages', 'reverse', 'isVolume']
 const RULE_CONTENT_KEYS = ['content', 'title', 'nextContentUrl', 'replaceRules', 'replaceRegex']
 
 export function hashCode(text) {
