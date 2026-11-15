@@ -12,8 +12,8 @@
 
 export const APP_META = {
   name: '拾卷',
-  versionName: '1.0.1',
-  versionCode: 101,
+  versionName: '1.0.2',
+  versionCode: 102,
   slogan: '把喜欢的书，收进一卷里',
   update: {
     provider: 'github',
