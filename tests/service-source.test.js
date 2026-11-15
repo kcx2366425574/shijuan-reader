@@ -12,7 +12,8 @@ import {
   buildSearchRequest,
   parseDocument,
   groupSearchResults,
-  proxiedUrl
+  proxiedUrl,
+  extractWafToken
 } from '../src/core/service.js'
 import { BUILTIN_SOURCES } from '../src/core/builtin-sources.js'
 
@@ -57,6 +58,24 @@ test('规范化 Legado 书源字段', () => {
   assert.deepEqual(source.replaceRules, ['广告##'])
   assert.equal(source.valid, true)
   assert.ok(source.id.startsWith('user-'))
+})
+
+test('WAF 验证页可提取 token', () => {
+  const html = `<!doctype html><html><body><script>var token='AAAA-test-token';document.cookie='waf_challenge='+token;</script></body></html>`
+  assert.equal(extractWafToken(html), 'AAAA-test-token')
+  assert.equal(extractWafToken('普通页面'), '')
+})
+
+test('规范化保留正文解码字段', () => {
+  const source = normalizeSource({
+    bookSourceName: '解码源',
+    bookSourceUrl: 'https://example.com',
+    searchUrl: '/search?q={{key}}',
+    ruleSearch: { bookList: '.item', name: '.title', bookUrl: '.title@href' },
+    ruleToc: { chapterList: '.chapter', chapterName: 'a', chapterUrl: 'a@href' },
+    ruleContent: { content: '#txt', decode: 'base64-script' }
+  })
+  assert.equal(source.ruleContent.decode, 'base64-script')
 })
 
 test('规范化保留目录分页字段与章节名正则转义', () => {

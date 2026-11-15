@@ -7,8 +7,8 @@
  * - Node 验证脚本（使用 fetch）
  */
 
-import { decodeResponse } from './charset.js'
-import { parseHTML } from './html.js'
+import { decodeBase64UTF8, decodeResponse } from './charset.js'
+import { parseHTML, textContent } from './html.js'
 import {
   buildTemplate,
   extractBookInfo,
@@ -17,6 +17,8 @@ import {
   extractNextPageUrl,
   extractSearchResults,
   extractValue,
+  applyReplaceRules,
+  cleanChapterText,
   resolveUrl
 } from './rule.js'
 
@@ -324,6 +326,52 @@ function looksBlocked(text) {
   return false
 }
 
+const wafTokenCache = new Map()
+
+function wafHostKey(url) {
+  const match = String(url || '').match(/^([a-z][a-z0-9+.-]*:\/\/[^/?#]+)/i)
+  return match ? match[1].toLowerCase() : ''
+}
+
+export function extractWafToken(text) {
+  const sample = String(text || '')
+  const match = sample.match(/var\s+token\s*=\s*['"]([^'"]+)['"]/i) ||
+    sample.match(/waf_challenge\s*=\s*['"]([^'"]+)['"]/i)
+  return match ? match[1] : ''
+}
+
+function setWafCookie(baseUrl, token) {
+  if (!hasNativeXhr()) return false
+  if (typeof plus === 'undefined' || !plus.navigator || typeof plus.navigator.setCookie !== 'function') return false
+  try {
+    plus.navigator.setCookie(baseUrl, 'waf_challenge=' + token + '; path=/')
+    return true
+  } catch (e) {
+    return false
+  }
+}
+
+function decodeScriptedContent(html, source, title) {
+  const sample = String(html || '')
+  const chunks = []
+  const pattern = /document\.(?:writeln|write)\(\s*[\w$.]+\.[\w$]+\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\)/g
+  let match
+  while ((match = pattern.exec(sample))) {
+    try {
+      chunks.push(decodeBase64UTF8(match[1]))
+    } catch (e) {
+      // 忽略无法解码的片段
+    }
+  }
+  if (!chunks.length) return ''
+  let text = textContent(parseHTML(chunks.join('\n')))
+  text = applyReplaceRules(text, source.replaceRules)
+  text = applyReplaceRules(text, source.ruleContent && source.ruleContent.replaceRules)
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (lines.length > 2 && /^作\s*者\s*[:：]/.test(lines[1])) lines.splice(0, 2)
+  return cleanChapterText(lines.join('\n'), { title })
+}
+
 /**
  * 请求并按编码解码为文本。
  */
@@ -349,31 +397,52 @@ export async function fetchText(url, options = {}) {
   }
 
   const useNative = hasNativeXhr() && !isH5Runtime()
-  const response = useNative
-    ? await nativeRequestText(url, {
-      method,
-      body,
-      headers,
-      timeout: options.timeout,
-      stage: options.stage,
-      sourceName: source.name,
-      charset: options.charset || 'auto'
-    })
-    : await requestBytes(url, {
-      method,
-      body,
-      headers,
-      timeout: options.timeout,
-      stage: options.stage,
-      sourceName: source.name,
-      sourceUrl: source.url,
-      referer
-    })
+  if (!useNative) {
+    const cached = wafTokenCache.get(wafHostKey(url))
+    if (cached) headers.Cookie = 'waf_challenge=' + cached
+  }
+  const requestOnce = async (extraHeaders = {}) => {
+    const requestHeaders = Object.assign({}, headers, extraHeaders)
+    const response = useNative
+      ? await nativeRequestText(url, {
+        method,
+        body,
+        headers: requestHeaders,
+        timeout: options.timeout,
+        stage: options.stage,
+        sourceName: source.name,
+        charset: options.charset || 'auto'
+      })
+      : await requestBytes(url, {
+        method,
+        body,
+        headers: requestHeaders,
+        timeout: options.timeout,
+        stage: options.stage,
+        sourceName: source.name,
+        sourceUrl: source.url,
+        referer
+      })
+    const contentType = getHeader(response.headers, 'content-type')
+    const decoded = useNative
+      ? { text: response.text || '', charset: response.charset || '' }
+      : decodeResponse(response.bytes, contentType, source.charset || 'auto')
+    return { response, contentType, text: decoded.text, charset: decoded.charset }
+  }
 
-  const contentType = getHeader(response.headers, 'content-type')
-  const { text, charset } = useNative
-    ? { text: response.text || '', charset: response.charset || '' }
-    : decodeResponse(response.bytes, contentType, source.charset || 'auto')
+  let { response, contentType, text, charset } = await requestOnce()
+  if (response.status === 503 && !options.wafRetried) {
+    const token = extractWafToken(text)
+    if (token) {
+      wafTokenCache.set(wafHostKey(url), token)
+      const cookieSet = setWafCookie(ensureBase(source), token)
+      const retried = await requestOnce(cookieSet ? {} : { Cookie: 'waf_challenge=' + token })
+      response = retried.response
+      contentType = retried.contentType
+      text = retried.text
+      charset = retried.charset
+    }
+  }
   if (response.status >= 400) {
     throw new RequestError(`网站返回 HTTP ${response.status}`, {
       url,
@@ -917,11 +986,22 @@ export async function getChapterContent(source, chapter, options = {}) {
     cache: false
   })
   const parsed = parseDocument(page.text, source, page.contentType)
-  const first = extractChapterContent(parsed.doc, source, {
-    baseUrl: page.url || target,
-    jsonRoot: parsed.jsonRoot,
-    chapterName: chapter.name
-  })
+  const decodeBase64Script = source.ruleContent && source.ruleContent.decode === 'base64-script'
+  let first
+  try {
+    first = extractChapterContent(parsed.doc, source, {
+      baseUrl: page.url || target,
+      jsonRoot: parsed.jsonRoot,
+      chapterName: chapter.name
+    })
+  } catch (e) {
+    if (!decodeBase64Script) throw e
+    first = { title: chapter.name, content: '', nextContentUrl: '' }
+  }
+  if (decodeBase64Script) {
+    const decoded = decodeScriptedContent(page.text, source, first.title || chapter.name)
+    if (decoded) first.content = decoded
+  }
 
   let content = first.content
   let title = first.title || chapter.name

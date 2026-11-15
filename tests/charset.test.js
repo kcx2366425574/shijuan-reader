@@ -8,7 +8,9 @@ import {
   detectCharset,
   decodeResponse,
   percentEncode,
-  encodeForCharset
+  encodeForCharset,
+  decodeBase64,
+  decodeBase64UTF8
 } from '../src/core/charset.js'
 
 test('GBK 解码：万相之王', () => {
@@ -63,4 +65,12 @@ test('GBK 搜索词百分号编码', () => {
   assert.equal(percentEncode('万相之王', 'gbk'), '%CD%F2%CF%E0%D6%AE%CD%F5')
   assert.equal(encodeForCharset('万相之王', 'gbk'), '%CD%F2%CF%E0%D6%AE%CD%F5')
   assert.equal(encodeForCharset('万相 之王', 'gbk'), '%CD%F2%CF%E0%20%D6%AE%CD%F5')
+})
+
+
+test('Base64 解码：中文 HTML 片段', () => {
+  const encoded = 'PHA+5paX56C06IuN56m55LmL5peg5LiK5beF5bOwPC9wPg=='
+  assert.equal(decodeBase64UTF8(encoded), '<p>斗破苍穹之无上巅峰</p>')
+  assert.equal(decodeBase64(encoded).length > 0, true)
+  assert.equal(decodeBase64UTF8(''), '')
 })

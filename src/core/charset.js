@@ -267,3 +267,33 @@ export function decodeResponse(input, contentType, override) {
 export function encodeForCharset(text, charset) {
   return percentEncode(text, normalizeCharset(charset))
 }
+
+/**
+ * 解码标准 Base64 为字节；无法识别的字符直接跳过。
+ */
+export function decodeBase64(input) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  const lookup = new Int16Array(128).fill(-1)
+  for (let i = 0; i < alphabet.length; i += 1) lookup[alphabet.charCodeAt(i)] = i
+  const text = String(input || '').replace(/[^A-Za-z0-9+/=]/g, '')
+  const bytes = []
+  let buffer = 0
+  let bits = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i)
+    if (ch === 61) break
+    const value = ch < 128 ? lookup[ch] : -1
+    if (value < 0) continue
+    buffer = (buffer << 6) | value
+    bits += 6
+    if (bits >= 8) {
+      bits -= 8
+      bytes.push((buffer >> bits) & 0xff)
+    }
+  }
+  return Uint8Array.from(bytes)
+}
+
+export function decodeBase64UTF8(input) {
+  return decodeUTF8(decodeBase64(input))
+}
