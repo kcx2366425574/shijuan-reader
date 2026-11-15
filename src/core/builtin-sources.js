@@ -7,7 +7,7 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
-export const BUILTIN_CONFIG_VERSION = 6
+export const BUILTIN_CONFIG_VERSION = 7
 
 export const BUILTIN_SOURCES = [
   {
@@ -242,6 +242,49 @@ export const BUILTIN_SOURCES = [
     ruleContent: {
       title: '#indexName',
       content: '#readPanel .readChapterAppendBody'
+    },
+    replaceRules: [],
+    tocReverse: false,
+    singleChapter: false
+  },
+  {
+    id: 'builtin-jurewx',
+    description: '同人小说站点，含成人向内容，默认关闭，请自行判断后启用。',
+    name: '聚热文学',
+    url: 'https://www.jurewx.com',
+    group: '自定义',
+    enabled: false,
+    builtin: true,
+    type: 'html',
+    charset: 'utf-8',
+    searchUrl: '/search.html',
+    searchMethod: 'POST',
+    searchBody: 's={{key}}',
+    searchCharset: 'utf-8',
+    ruleSearch: {
+      bookList: '.sort_list li',
+      name: '.s2 a',
+      author: '.s5',
+      bookUrl: '.s2 a@href'
+    },
+    ruleBookInfo: {
+      name: 'meta[property="og:novel:book_name"]@content',
+      author: 'meta[property="og:novel:author"]@content',
+      coverUrl: 'meta[property="og:image"]@content',
+      intro: 'meta[property="og:description"]@content',
+      kind: 'meta[property="og:novel:category"]@content',
+      status: 'meta[property="og:novel:status"]@content',
+      lastChapter: 'meta[property="og:novel:latest_chapter_name"]@content'
+    },
+    ruleToc: {
+      chapterList: '.chapter-list li',
+      chapterName: 'a',
+      chapterUrl: 'a@href'
+    },
+    ruleContent: {
+      title: '#chaptername',
+      content: '#txt',
+      decode: 'base64-script'
     },
     replaceRules: [],
     tocReverse: false,
