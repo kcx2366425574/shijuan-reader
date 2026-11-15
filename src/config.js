@@ -10,25 +10,23 @@
  * 发布新版本时，请同步修改 manifest.json 与这里的 versionName/versionCode。
  */
 
-const ENV = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env : {}
-
 export const APP_META = {
   name: '拾卷',
   versionName: '1.0.0',
   versionCode: 100,
   slogan: '把喜欢的书，收进一卷里',
   update: {
-    provider: ENV.VITE_UPDATE_PROVIDER || 'github',
-    repo: ENV.VITE_UPDATE_REPO || 'kcx2366425574/shijuan-reader',
-    manifestUrl: ENV.VITE_UPDATE_MANIFEST || '',
+    provider: 'github',
+    repo: 'kcx2366425574/shijuan-reader',
+    manifestUrl: '',
     releasePage: '',
     autoCheck: true
   },
   sourceRepo: {
-    provider: ENV.VITE_SOURCE_REPO_PROVIDER || 'github',
-    repo: ENV.VITE_SOURCE_REPO || 'kcx2366425574/shijuan-sources',
-    branch: ENV.VITE_SOURCE_REPO_BRANCH || 'main',
-    manifestUrl: ENV.VITE_SOURCE_REPO_MANIFEST || '',
+    provider: 'github',
+    repo: 'kcx2366425574/shijuan-sources',
+    branch: 'main',
+    manifestUrl: '',
     autoSync: true
   },
   disclaimer: '拾卷只提供书源解析与阅读界面，不存储、不传播小说内容。请仅访问你拥有阅读权限的内容，并遵守目标网站的服务条款与当地法律。'

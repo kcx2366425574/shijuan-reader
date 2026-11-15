@@ -20,7 +20,6 @@ import {
 
 export const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 const HAS_UNI = typeof uni !== 'undefined' && uni && typeof uni.request === 'function'
-const IS_DEV = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV
 
 function isH5Runtime() {
   if (typeof uni !== 'undefined' && uni.getSystemInfoSync) {
@@ -34,7 +33,19 @@ function isH5Runtime() {
   return typeof window !== 'undefined' && typeof document !== 'undefined'
 }
 
-const USE_DEV_PROXY = !!IS_DEV && isH5Runtime()
+function isH5DevRuntime() {
+  if (!isH5Runtime()) return false
+  if (typeof location === 'undefined') return false
+  const host = String(location.hostname || '')
+  return host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+}
+
+const USE_DEV_PROXY = isH5DevRuntime()
 
 export class RequestError extends Error {
   constructor(message, options = {}) {
