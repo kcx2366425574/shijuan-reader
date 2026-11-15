@@ -2,8 +2,8 @@
     "name" : "拾卷",
     "appid" : "__UNI__E05B11F",
     "description" : "拾卷 · 支持自定义书源与智能识别的电子书阅读器",
-    "versionName" : "1.0.3",
-    "versionCode" : "103",
+    "versionName" : "1.0.4",
+    "versionCode" : "104",
     "transformPx" : false,
     "app-plus" : {
         "usingComponents" : true,
