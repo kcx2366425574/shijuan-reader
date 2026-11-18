@@ -85,7 +85,7 @@
     做法：进度独立 key，2 秒节流；书架数据只在增删改时写。
     验收：滚动时无卡顿；进度恢复正常。
 
-[ ] 12. 增加 CI
+[x] 12. 增加 CI
     位置：仓库根目录 .github/workflows/
     做法：push 时运行 npm ci + npm test + npm run build:h5；
           书源仓库增加定时联网巡检（见第四节）。

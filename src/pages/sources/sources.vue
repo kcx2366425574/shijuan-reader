@@ -7,7 +7,7 @@
         <text class="header-title serif">万千站点，皆可成卷</text>
         <text class="header-sub">打开即用；书源失效时可以一键同步更新</text>
       </view>
-      <view v-if="showAdvanced" class="header-actions">
+      <view class="header-actions">
         <view class="round-btn" @tap="openImport" hover-class="press">
           <text class="plus">+</text>
         </view>
@@ -54,7 +54,7 @@
       </view>
     </view>
 
-    <view v-if="showAdvanced" class="quick-actions">
+    <view class="quick-actions">
       <view class="quick-action primary" @tap="goDetect" hover-class="press">
         <view class="quick-icon spark">
           <view class="spark-line s1" />
@@ -91,7 +91,7 @@
 
     <view class="list-head">
       <text class="section-label">可用书源</text>
-      <text class="list-hint advanced-link" @tap="toggleAdvanced">{{ showAdvanced ? '收起高级工具' : '高级工具' }}</text>
+      <text class="list-hint advanced-link" @tap="toggleAdvanced">{{ showAdvanced ? '收起更多工具' : '更多工具' }}</text>
     </view>
 
     <view v-if="sources.length" class="source-list">
@@ -146,7 +146,7 @@
         </view>
         <view v-else class="source-reader-state">
           <text class="state-dot" :class="{ on: source.enabled !== false }" />
-          <text>{{ source.enabled === false ? '已停用' : '可用' }}</text>
+          <text>{{ source.enabled === false ? '已停用' : '已启用' }}</text>
         </view>
       </view>
     </view>
@@ -259,7 +259,7 @@
           <text class="test-preview-text">{{ testReport.stages.content.preview }}</text>
         </view>
         <view v-if="testReport && testReport.error" class="test-error">
-          <text>{{ testReport.error }}</text>
+          <text>{{ testHint || testReport.error }}</text>
         </view>
         <view v-if="testReport && testReport.ok" class="test-success">书源可用，可以开始找书了。</view>
       </view>
@@ -308,7 +308,7 @@
             <text class="info-source-desc">{{ sourceDescription(infoSource) }}</text>
           </view>
           <view class="info-source-badge" :class="{ off: infoSource.enabled === false }">
-            {{ infoSource.enabled === false ? '已停用' : '可用' }}
+            {{ infoSource.enabled === false ? '已停用' : '已启用' }}
           </view>
         </view>
 
@@ -362,6 +362,8 @@ import BottomSheet from '../../components/BottomSheet.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import {
   ensureSources,
+  loadShelf,
+  loadSearchHistory,
   loadSettings,
   saveSettings,
   toggleSource,
@@ -393,7 +395,9 @@ const importError = ref('')
 const preview = ref([])
 const showTest = ref(false)
 const testTarget = ref(null)
-const testKeyword = ref('万相之王')
+const DEFAULT_TEST_KEYWORD = '万相之王'
+const testKeyword = ref(DEFAULT_TEST_KEYWORD)
+const testHint = ref('')
 const testing = ref(false)
 const testReport = ref(null)
 const testProgressText = ref('')
@@ -523,7 +527,7 @@ function handleSourceLongPress(source) {
 function toggleAdvanced() {
   showAdvanced.value = !showAdvanced.value
   if (showAdvanced.value) {
-    toast('已显示高级工具，普通读者可以忽略')
+    toast('已展开更多工具')
   }
 }
 
@@ -666,9 +670,24 @@ function confirmImport() {
   toastSuccess(`已导入 ${count} 个书源`)
 }
 
+// 体检默认词优先取书架最近阅读的书，其次搜索历史，最后回退默认值。
+function defaultTestKeyword() {
+  try {
+    const shelf = loadShelf()
+    const latest = shelf.slice().sort((a, b) => (b.lastReadAt || 0) - (a.lastReadAt || 0))[0]
+    if (latest && latest.name && String(latest.name).trim()) return String(latest.name).trim()
+    const history = loadSearchHistory()
+    if (history.length && String(history[0]).trim()) return String(history[0]).trim()
+  } catch (e) {
+    return DEFAULT_TEST_KEYWORD
+  }
+  return DEFAULT_TEST_KEYWORD
+}
+
 function openTest(source) {
   testTarget.value = source
-  testKeyword.value = '万相之王'
+  testKeyword.value = defaultTestKeyword()
+  testHint.value = ''
   testReport.value = null
   testProgressText.value = ''
   showTest.value = true
@@ -689,6 +708,7 @@ async function runTest() {
   }
   testing.value = true
   testReport.value = null
+  testHint.value = ''
   testProgressText.value = '准备中…'
   try {
     const report = await testSource(testTarget.value, keyword, {
@@ -697,6 +717,10 @@ async function runTest() {
       }
     })
     testReport.value = report
+    // 搜索 0 结果不等于书源失效，给出可操作的提示而非单纯判失败。
+    if (!report.ok && (report.errorStage === 'search' || (report.stages.search && report.stages.search.count === 0))) {
+      testHint.value = `该书源可能不收录《${keyword}》，换个书名试试。`
+    }
     testProgressText.value = report.ok ? '体检完成' : '体检未通过'
   } catch (e) {
     testProgressText.value = e && e.message ? e.message : '体检失败'

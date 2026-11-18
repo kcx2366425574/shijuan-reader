@@ -293,6 +293,7 @@ import {
   ensureSources,
   getShelfBook,
   upsertShelfBook,
+  updateShelfBook,
   updateBookProgress,
   loadSettings,
   saveSettings
@@ -621,6 +622,12 @@ async function init() {
       tocUrl: book.value.tocUrl
     })
   } else {
+    // 书源已删除、离线目录又为空时，openBook 无法工作，后续访问 source.value.id 会抛空指针。
+    if (!source.value) {
+      loadingBook.value = false
+      fatalError.value = '这本书的书源已被删除，且本地缓存不完整，无法阅读。'
+      return
+    }
     try {
       const opened = await openBook(source.value, bookUrl, shelfBook || {}, {})
       chapters.value = opened.chapters || []
@@ -665,6 +672,13 @@ async function init() {
   index = clamp(index, 0, chapters.value.length - 1)
   loadingBook.value = false
   await loadChapter(index, { restore: true })
+
+  // 真正进入正文后清掉追更角标。放在 reader 层可一处覆盖书架卡片、详情页、
+  // 搜索结果、书城等全部入口；未成功读出正文时保留角标，避免误清。
+  if (!chapterError.value && paragraphs.value.length) {
+    const readingBookId = (book.value && book.value.id) || bookId
+    if (readingBookId) updateShelfBook(readingBookId, { newChapterCount: 0 })
+  }
 
   refreshCacheState()
   if (settings.value.keepScreenOn) {

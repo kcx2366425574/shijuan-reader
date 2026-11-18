@@ -118,7 +118,7 @@ src/
   utils/           格式化与小交互
   config.js        应用元信息、更新仓库、书源仓库默认值
   pages.json / manifest.json
-tests/             60 项零依赖单测
+tests/             81 项零依赖单测（实际数量以 npm test 输出为准）
 tools/             开发代理、书源验证、智能识别验证、图标生成
 ```
 

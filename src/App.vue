@@ -9,10 +9,14 @@ export default {
       ensureSources()
       // 触发一次读取，确保历史版本缺少的字段被默认值补齐
       const settings = saveSettings(loadSettings())
-      // 后台静默检查更新；未配置更新仓库时自动跳过
-      autoCheckUpdate(settings).catch(() => {})
-      // 静默同步独立书源仓库；未配置时自动跳过
-      autoSyncSourceRepo(settings).catch(() => {})
+      // 后台静默检查延后并错峰，避免首屏同时发起两个 20s 超时请求。
+      // 未配置更新仓库/书源仓库时各自会自动跳过；异常仍单独捕获，不影响启动。
+      setTimeout(() => {
+        autoCheckUpdate(settings).catch(() => {})
+      }, 3000)
+      setTimeout(() => {
+        autoSyncSourceRepo(settings).catch(() => {})
+      }, 4500)
     } catch (e) {
       console.error('[拾卷] 初始化失败', e)
     }

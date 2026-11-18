@@ -108,6 +108,9 @@
           <view v-if="book.progress" class="read-ribbon">
             <text>{{ progressPercent(book) }}%</text>
           </view>
+          <view v-if="book.newChapterCount > 0" class="new-chapter-ribbon">
+            <text>+{{ book.newChapterCount }} 新章</text>
+          </view>
           <view
             class="update-fab"
             :class="{ busy: updatingIds[book.id] }"
@@ -221,6 +224,13 @@ function sourceForBook(book) {
   return sources.value.find((item) => item.id === book.sourceId) || null
 }
 
+// 进入阅读后清掉追更角标；沿用 newChapterCount 字段，不新增数据结构。
+function clearNewChapterBadge(book) {
+  if (!book || !(book.newChapterCount > 0)) return
+  updateShelfBook(book.id, { newChapterCount: 0 })
+  book.newChapterCount = 0
+}
+
 function applyRefresh(book, result) {
   const info = result.info || {}
   const patch = {
@@ -294,6 +304,7 @@ function continueReading() {
     return
   }
   const book = continueBook.value
+  clearNewChapterBadge(book)
   const index = book.progress && book.progress.chapterIndex !== undefined ? book.progress.chapterIndex : 0
   uni.navigateTo({
     url: `/pages/reader/reader?bookId=${encodeURIComponent(book.id)}&chapter=${index}`
@@ -310,6 +321,7 @@ async function showBookMenu(book) {
     updateBook(book)
   } else if (index === 0) {
     if (hasProgress) {
+      clearNewChapterBadge(book)
       uni.navigateTo({
         url: `/pages/reader/reader?bookId=${encodeURIComponent(book.id)}&chapter=${book.progress.chapterIndex || 0}`
       })
@@ -700,6 +712,21 @@ onShow(load)
 
 .update-fab.busy {
   opacity: 0.65;
+}
+
+.new-chapter-ribbon {
+  position: absolute;
+  left: 10rpx;
+  bottom: 10rpx;
+  height: 34rpx;
+  padding: 0 12rpx;
+  border-radius: 999rpx;
+  background: var(--accent);
+  color: #fff8ea;
+  font-size: 18rpx;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 4rpx 12rpx rgba(20, 28, 24, 0.16);
 }
 
 .read-ribbon {

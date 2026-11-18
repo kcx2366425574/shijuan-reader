@@ -41,17 +41,19 @@
       <view class="source-line" @tap="openSourceSheet" hover-class="press">
         <view class="source-dot" />
         <text class="source-line-text">当前 {{ activeSourceCount }} 个书源参与搜索</text>
+        <text v-if="statuses.length && !searching && !statusExpanded" class="status-reopen" @tap.stop="statusExpanded = true">搜索状态 ›</text>
         <text class="source-line-arrow">›</text>
       </view>
     </view>
 
-    <view v-if="searching || statuses.length" class="status-panel">
+    <view v-if="searching || (statusExpanded && statuses.length)" class="status-panel">
       <view class="status-head">
         <view class="status-head-copy">
           <text class="section-label">{{ searching ? '搜索中' : '搜索完成' }}</text>
           <text class="status-summary">{{ summaryText }}</text>
         </view>
         <view v-if="searching && completedCount" class="stop-wait" @tap="stopWaiting">先看已有结果</view>
+        <view v-if="!searching" class="status-close" @tap.stop="statusExpanded = false">收起</view>
       </view>
       <scroll-view class="status-scroll" scroll-x :show-scrollbar="false">
         <view class="status-row">
@@ -242,7 +244,9 @@ const history = ref([])
 const showSourceSheet = ref(false)
 const searchRunId = ref(0)
 const completedCount = ref(0)
-const ignoreLateResults = ref(false)
+// 只标记"用户已停止等待 UI"；慢源返回仍照常接收，不再丢弃结果。
+const stoppedWaiting = ref(false)
+const statusExpanded = ref(false)
 const settings = ref(loadSettings())
 const suggestions = ['神通者', '万相之王', '斗破苍穹', '诡秘之主']
 
@@ -259,6 +263,10 @@ const summaryText = computed(() => {
   if (searching.value) {
     const total = statuses.value.length || activeSourceCount.value
     return `${groups.value.length} 本 · 已完成 ${completedCount.value}/${total} 个书源`
+  }
+  if (stoppedWaiting.value) {
+    const pending = statuses.value.filter((status) => ['skipped', 'waiting', 'loading'].includes(status.state)).length
+    return `${groups.value.length} 本书 · 后台补全中${pending ? `（剩余 ${pending} 个源）` : ''}`
   }
   const ok = statuses.value.filter((status) => status.state === 'done').length
   const failed = statuses.value.filter((status) => status.state === 'error').length
@@ -372,7 +380,8 @@ async function runSearch() {
     return
   }
   const runId = ++searchRunId.value
-  ignoreLateResults.value = false
+  stoppedWaiting.value = false
+  statusExpanded.value = true
   completedCount.value = 0
   keyword.value = text
   history.value = addSearchHistory(text)
@@ -403,30 +412,31 @@ async function runSearch() {
     const results = await searchAllSources(activeSources.value, text, {
       concurrency: settings.value.searchConcurrency || 3,
       onSourceDone(item) {
-        if (runId !== searchRunId.value || ignoreLateResults.value) return
+        // 慢源结果在停止等待后仍静默合并，徽标由 skipped 更新为结果数。
+        if (runId !== searchRunId.value) return
         applyItem(item)
       }
     })
-    if (runId !== searchRunId.value || ignoreLateResults.value) return
+    if (runId !== searchRunId.value) return
     // 兜底：极快返回时 onSourceDone 可能早于状态初始化
     for (const item of results) applyItem(item)
     groups.value = groupSearchResults(results, text)
   } catch (e) {
-    if (!ignoreLateResults.value) toast(e && e.message ? e.message : '搜索失败')
+    if (runId === searchRunId.value) toast(e && e.message ? e.message : '搜索失败')
   } finally {
     if (runId === searchRunId.value) {
-      if (!ignoreLateResults.value) {
-        searching.value = false
-        searchDone.value = true
-      }
+      searching.value = false
+      searchDone.value = true
+      // 所有源均已返回，后台补全结束，摘要恢复为常规“搜索完成”文案。
+      stoppedWaiting.value = false
       history.value = loadSearchHistory()
     }
   }
 }
 
 function stopWaiting() {
-  if (!searching.value) return
-  ignoreLateResults.value = true
+  if (!searching.value || stoppedWaiting.value) return
+  stoppedWaiting.value = true
   searching.value = false
   searchDone.value = true
   statuses.value = statuses.value.map((status) => {
@@ -435,7 +445,7 @@ function stopWaiting() {
     }
     return status
   })
-  toast('已展示当前完成的书源结果')
+  toast('已展示当前结果，剩余书源仍会在后台补全')
 }
 
 function openGroup(group) {
@@ -474,7 +484,13 @@ function openOffer(offer, group) {
   })
 }
 
-onShow(load)
+function handleShow() {
+  load()
+  // 回到书城时若非搜索中，默认折叠状态面板，把空间让给结果列表。
+  if (!searching.value) statusExpanded.value = false
+}
+
+onShow(handleShow)
 </script>
 
 <style scoped>
@@ -1167,6 +1183,25 @@ onShow(load)
 
 .status-head {
   align-items: center;
+}
+
+.status-close {
+  height: 52rpx;
+  padding: 0 18rpx;
+  border-radius: 999rpx;
+  display: flex;
+  align-items: center;
+  font-size: 20rpx;
+  color: var(--muted);
+  background: rgba(37, 42, 36, 0.05);
+  flex-shrink: 0;
+}
+
+.status-reopen {
+  font-size: 20rpx;
+  color: var(--jade);
+  margin-left: 14rpx;
+  flex-shrink: 0;
 }
 
 .stop-wait {

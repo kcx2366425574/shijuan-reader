@@ -33,7 +33,7 @@ export class UnsupportedRuleError extends Error {
 
 export class EmptyContentError extends Error {
   constructor(message) {
-    super(message || '正文为空，可能被网站反爬拦截')
+    super(message || '本章正文较短或为空，可继续下一章')
     this.name = 'EmptyContentError'
   }
 }
@@ -1080,7 +1080,8 @@ export function extractChapterContent(doc, source, context = {}) {
   content = applyReplaceRules(content, rules.replaceRules)
   content = cleanChapterText(content, { title })
 
-  if (!content || content.length < 20) {
+  // 番外/诗歌/插图章正文可能很短，8 字以上即按正常章节放行。
+  if (!content || content.length < 8) {
     throw new EmptyContentError()
   }
 
