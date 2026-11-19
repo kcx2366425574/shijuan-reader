@@ -102,14 +102,14 @@
             radius="10rpx"
             shadow
           />
-          <view v-if="offlineState(book)" class="offline-ribbon">
+          <view v-if="offlineState(book)" class="offline-ribbon" :class="{ 'with-new-badge': book.newChapterCount > 0 }">
             <text>{{ offlineState(book) }}</text>
           </view>
           <view v-if="book.progress" class="read-ribbon">
             <text>{{ progressPercent(book) }}%</text>
           </view>
           <view v-if="book.newChapterCount > 0" class="new-chapter-ribbon">
-            <text>+{{ book.newChapterCount }} 新章</text>
+            <text>{{ book.newChapterCount > 99 ? '99+' : book.newChapterCount }}</text>
           </view>
           <view
             class="update-fab"
@@ -714,19 +714,25 @@ onShow(load)
   opacity: 0.65;
 }
 
+/* 追更角标：左上角通知式圆形徽章，使用独立红色以区别于主题 --accent */
 .new-chapter-ribbon {
   position: absolute;
   left: 10rpx;
-  bottom: 10rpx;
-  height: 34rpx;
-  padding: 0 12rpx;
+  top: 10rpx;
+  min-width: 44rpx;
+  height: 44rpx;
+  padding: 0 10rpx;
+  box-sizing: border-box;
   border-radius: 999rpx;
-  background: var(--accent);
-  color: #fff8ea;
-  font-size: 18rpx;
+  background: #e0342b;
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 700;
   display: flex;
   align-items: center;
-  box-shadow: 0 4rpx 12rpx rgba(20, 28, 24, 0.16);
+  justify-content: center;
+  box-shadow: 0 4rpx 12rpx rgba(120, 20, 24, 0.32);
+  z-index: 2;
 }
 
 .read-ribbon {
@@ -823,5 +829,10 @@ onShow(load)
   display: flex;
   align-items: center;
   backdrop-filter: blur(6rpx);
+}
+
+/* 左上角同时有追更角标时，离线标记下移避免遮挡 */
+.offline-ribbon.with-new-badge {
+  top: 62rpx;
 }
 </style>

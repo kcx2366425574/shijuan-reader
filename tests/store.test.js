@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { BUILTIN_SOURCES } from '../src/core/builtin-sources.js'
+import { BUILTIN_SOURCES, BUILTIN_CONFIG_VERSION } from '../src/core/builtin-sources.js'
 
 import {
   __resetMemoryStorage,
@@ -99,15 +99,19 @@ test('阅读设置默认值、范围约束与重置', () => {
   const defaults = loadSettings()
   assert.equal(defaults.theme, 'paper')
   assert.equal(defaults.fontSize, 19)
+  assert.equal(defaults.catalogReverse, false)
 
-  const saved = saveSettings({ theme: 'night', fontSize: 100, lineHeight: 0.5 })
+  const saved = saveSettings({ theme: 'night', fontSize: 100, lineHeight: 0.5, catalogReverse: true })
   assert.equal(saved.theme, 'night')
   assert.equal(saved.fontSize, 32)
   assert.equal(saved.lineHeight, 1.4)
+  assert.equal(saved.catalogReverse, true)
+  assert.equal(loadSettings().catalogReverse, true, '目录排序偏好应持久化')
 
   const reset = resetSettings()
   assert.equal(reset.theme, 'paper')
   assert.equal(reset.fontSize, 19)
+  assert.equal(reset.catalogReverse, false)
 })
 
 test('搜索历史去重、置顶与上限', () => {
@@ -146,4 +150,48 @@ test('书源按地址与名称去重', () => {
   const dup = sources.filter((source) => source.url.indexOf('dup.example.com') !== -1)
   assert.equal(dup.length, 1)
   assert.equal(dup[0].id, 'dup-1')
+})
+
+test('存量用户 storedVersion=7 升级后能补齐 jurewx 分页规则并保留启用状态', async () => {
+  // 用独立的 store 模块实例 + uni storage mock 模拟老版本用户的本地数据，
+  // 避免污染本文件其它用例使用的内存 storage。
+  const storage = new Map()
+  const previousUni = globalThis.uni
+  globalThis.uni = {
+    getStorageSync: (key) => (storage.has(key) ? storage.get(key) : ''),
+    setStorageSync: (key, value) => storage.set(key, value),
+    removeStorageSync: (key) => storage.delete(key),
+    request: () => {}
+  }
+  try {
+    const freshStore = await import('../src/core/store.js?upgrade-regression=' + Date.now())
+    const oldBuiltins = BUILTIN_SOURCES.map((source) => {
+      const copy = JSON.parse(JSON.stringify(source))
+      copy.builtinConfigVersion = 7
+      if (copy.id === 'builtin-jurewx') {
+        delete copy.ruleContent.nextContentUrl // 存量用户本地那份旧规则
+        copy.enabled = true                    // 模拟用户已启用该源
+      }
+      return copy
+    })
+    storage.set(freshStore.KEYS.SEEDED, true)
+    storage.set(freshStore.KEYS.BUILTIN_VERSION, 7)
+    storage.set(freshStore.KEYS.SOURCES, oldBuiltins)
+
+    const sources = freshStore.ensureSources()
+    const upgraded = sources.find((item) => item.id === 'builtin-jurewx')
+    assert.ok(upgraded, '聚热文学应保留在书源列表中')
+    assert.ok(upgraded.ruleContent.nextContentUrl, '存量用户应拿到新的正文分页规则')
+    assert.equal(upgraded.enabled, true, '用户已启用状态不得丢失')
+    assert.equal(upgraded.builtinConfigVersion, BUILTIN_CONFIG_VERSION)
+    assert.equal(
+      freshStore.loadSources().find((item) => item.id === 'builtin-jurewx').ruleContent.nextContentUrl,
+      upgraded.ruleContent.nextContentUrl,
+      '升级结果应已持久化'
+    )
+    assert.equal(freshStore.KEYS.BUILTIN_VERSION, 'shijuan.builtinVersion.v1')
+    assert.equal(Number(storage.get(freshStore.KEYS.BUILTIN_VERSION)), BUILTIN_CONFIG_VERSION)
+  } finally {
+    globalThis.uni = previousUni
+  }
 })

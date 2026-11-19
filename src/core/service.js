@@ -987,22 +987,36 @@ export async function getChapterContent(source, chapter, options = {}) {
   })
   const parsed = parseDocument(page.text, source, page.contentType)
   const decodeBase64Script = source.ruleContent && source.ruleContent.decode === 'base64-script'
-  let first
-  try {
-    first = extractChapterContent(parsed.doc, source, {
-      baseUrl: page.url || target,
-      jsonRoot: parsed.jsonRoot,
-      chapterName: chapter.name
-    })
-  } catch (e) {
-    if (!decodeBase64Script) throw e
-    first = { title: chapter.name, content: '', nextContentUrl: '' }
-  }
-  if (decodeBase64Script) {
-    const decoded = decodeScriptedContent(page.text, source, first.title || chapter.name)
-    if (decoded) first.content = decoded
+
+  // 每一页走同一套解析/解码流程。base64-script 站点的正文在脚本而非 DOM 文本中，
+  // extractChapterContent 可能因正文过短抛错，此时仍要取出分页地址，否则后续页无法跟随。
+  const readPagePart = (pageText, doc, baseUrl, jsonRoot, fallbackTitle) => {
+    let part
+    try {
+      part = extractChapterContent(doc, source, {
+        baseUrl,
+        jsonRoot,
+        chapterName: fallbackTitle
+      })
+    } catch (e) {
+      if (!decodeBase64Script) throw e
+      const rule = source.ruleContent && source.ruleContent.nextContentUrl
+      part = {
+        title: fallbackTitle,
+        content: '',
+        nextContentUrl: rule
+          ? extractValue(doc, rule, { baseUrl, isUrl: true, field: 'nextContentUrl' })
+          : ''
+      }
+    }
+    if (decodeBase64Script) {
+      const decoded = decodeScriptedContent(pageText, source, part.title || fallbackTitle)
+      if (decoded) part.content = decoded
+    }
+    return part
   }
 
+  const first = readPagePart(page.text, parsed.doc, page.url || target, parsed.jsonRoot, chapter.name)
   let content = first.content
   let title = first.title || chapter.name
   let next = first.nextContentUrl
@@ -1020,11 +1034,13 @@ export async function getChapterContent(source, chapter, options = {}) {
         cache: false
       })
       const nextParsed = parseDocument(nextPage.text, source, nextPage.contentType)
-      const part = extractChapterContent(nextParsed.doc, source, {
-        baseUrl: nextPage.url || next,
-        jsonRoot: nextParsed.jsonRoot,
-        chapterName: title
-      })
+      const part = readPagePart(
+        nextPage.text,
+        nextParsed.doc,
+        nextPage.url || next,
+        nextParsed.jsonRoot,
+        title
+      )
       if (part.content && part.content !== content) {
         content += '\n' + part.content
       }

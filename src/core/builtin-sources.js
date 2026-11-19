@@ -7,7 +7,7 @@
  * 请仅将本应用用于阅读你有权访问的内容。
  */
 
-export const BUILTIN_CONFIG_VERSION = 7
+export const BUILTIN_CONFIG_VERSION = 8
 
 export const BUILTIN_SOURCES = [
   {
@@ -284,6 +284,9 @@ export const BUILTIN_SOURCES = [
     ruleContent: {
       title: '#chaptername',
       content: '#txt',
+      // 下一页地址在解码脚本的 JS 变量中（页面按钮文案虽为“下一章”，
+      // 实际指向 yuyxgcrc_1.html 这类同章分页，_N.html 会被 sameChapterPage 归一化）
+      nextContentUrl: 'script[type="text/javascript"]@html##[\\s\\S]*?var hhekgsv=[\'"]([^\'"]+)[\'"][\\s\\S]*##$1##',
       decode: 'base64-script'
     },
     replaceRules: [],

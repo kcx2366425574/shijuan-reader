@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   fontFamily: 'serif',
   autoNext: false,
   keepScreenOn: true,
+  catalogReverse: false,
   searchConcurrency: 3,
   autoCheckUpdate: true,
   updateProvider: '',
@@ -377,6 +378,7 @@ export function loadSettings() {
   settings.searchConcurrency = Math.max(1, Math.min(6, Number(settings.searchConcurrency) || 3))
   if (!['paper', 'green', 'night', 'gray'].includes(settings.theme)) settings.theme = 'paper'
   if (!['serif', 'sans'].includes(settings.fontFamily)) settings.fontFamily = 'serif'
+  settings.catalogReverse = !!settings.catalogReverse
   return settings
 }
 
@@ -385,6 +387,7 @@ export function saveSettings(patch) {
   settings.fontSize = Math.max(14, Math.min(32, Number(settings.fontSize) || 19))
   settings.lineHeight = Math.max(1.4, Math.min(2.6, Number(settings.lineHeight) || 1.9))
   settings.searchConcurrency = Math.max(1, Math.min(6, Number(settings.searchConcurrency) || 3))
+  settings.catalogReverse = !!settings.catalogReverse
   writeJson(KEYS.SETTINGS, settings)
   return settings
 }

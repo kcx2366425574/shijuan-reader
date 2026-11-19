@@ -154,6 +154,7 @@
     <BottomSheet v-model:show="showCatalog" title="章节目录">
       <view class="catalog-tools">
         <text class="catalog-range">{{ catalogRangeText }}</text>
+        <view class="catalog-sort" @tap="toggleCatalogOrder">{{ settings.catalogReverse ? '⇅ 正序' : '⇅ 倒序' }}</view>
         <view class="catalog-jump">
           <input
             v-model="catalogJump"
@@ -203,7 +204,9 @@ import {
   getShelfBook,
   makeBookId,
   upsertShelfBook,
-  updateShelfBook
+  updateShelfBook,
+  loadSettings,
+  saveSettings
 } from '../../core/store.js'
 import { getCachedBook, cacheBook } from '../../core/book-cache.js'
 import { takeHandoff } from '../../core/handoff.js'
@@ -225,6 +228,7 @@ const introExpanded = ref(false)
 const showCatalog = ref(false)
 const catalogPage = ref(0)
 const catalogJump = ref('')
+const settings = ref(loadSettings())
 const switching = ref(false)
 const currentBookId = ref('')
 const currentBookUrl = ref('')
@@ -285,16 +289,39 @@ const previewChapters = computed(() => {
 })
 
 const catalogPageCount = computed(() => Math.max(1, Math.ceil(chapters.value.length / PAGE_SIZE)))
+// 排序方向只影响目录展示；index 始终指向 chapters 原数组下标。
 const catalogRangeText = computed(() => {
-  if (!chapters.value.length) return '暂无章节'
-  const start = catalogPage.value * PAGE_SIZE + 1
-  const end = Math.min(chapters.value.length, (catalogPage.value + 1) * PAGE_SIZE)
-  return `${start}–${end} / ${chapters.value.length}`
+  const total = chapters.value.length
+  if (!total) return '暂无章节'
+  const start = catalogPage.value * PAGE_SIZE
+  if (settings.value.catalogReverse) {
+    const end = Math.max(1, total - start)
+    const begin = Math.max(1, end - PAGE_SIZE + 1)
+    return `${begin}–${end} / ${total}`
+  }
+  const begin = start + 1
+  const end = Math.min(total, (catalogPage.value + 1) * PAGE_SIZE)
+  return `${begin}–${end} / ${total}`
 })
 const catalogItems = computed(() => {
+  const total = chapters.value.length
+  if (!total) return []
   const start = catalogPage.value * PAGE_SIZE
+  if (settings.value.catalogReverse) {
+    // 倒序第 start 项对应原数组 total - 1 - start，反向切片后逐项回填原 index。
+    const last = Math.max(0, total - 1 - start)
+    const from = Math.max(0, last - PAGE_SIZE + 1)
+    return chapters.value.slice(from, last + 1).reverse()
+      .map((chapter, offset) => ({ ...chapter, index: last - offset }))
+  }
   return chapters.value.slice(start, start + PAGE_SIZE).map((chapter, offset) => ({ ...chapter, index: start + offset }))
 })
+
+function catalogPageForIndex(index) {
+  const total = chapters.value.length
+  const offset = settings.value.catalogReverse ? total - 1 - index : index
+  return Math.max(0, Math.min(catalogPageCount.value - 1, Math.floor(offset / PAGE_SIZE)))
+}
 
 function hostOf(url) {
   const match = String(url || '').match(/^[a-z]+:\/\/([^/?#]+)/i)
@@ -687,7 +714,7 @@ function openCatalog() {
     toast('目录还没有加载好')
     return
   }
-  catalogPage.value = Math.floor(currentProgressIndex() / PAGE_SIZE)
+  catalogPage.value = catalogPageForIndex(currentProgressIndex())
   catalogJump.value = ''
   showCatalog.value = true
 }
@@ -698,6 +725,12 @@ function changeCatalogPage(delta) {
   catalogPage.value = next
 }
 
+function toggleCatalogOrder() {
+  settings.value = saveSettings({ ...settings.value, catalogReverse: !settings.value.catalogReverse })
+  // 切换后仍让当前进度章所在页可见。
+  catalogPage.value = catalogPageForIndex(currentProgressIndex())
+}
+
 function jumpToChapter() {
   const value = parseInt(catalogJump.value, 10)
   if (!Number.isFinite(value) || value < 1) {
@@ -705,7 +738,7 @@ function jumpToChapter() {
     return
   }
   const index = Math.min(chapters.value.length, value) - 1
-  catalogPage.value = Math.floor(index / PAGE_SIZE)
+  catalogPage.value = catalogPageForIndex(index)
   catalogJump.value = ''
   toast(`已定位到第 ${index + 1} 章`)
 }
@@ -833,6 +866,7 @@ onLoad((options) => {
 })
 
 onShow(() => {
+  settings.value = loadSettings()
   refreshOfflineMeta()
 })
 
@@ -1320,6 +1354,19 @@ onUnload(() => {
   font-size: 23rpx;
   color: var(--muted);
   letter-spacing: 1rpx;
+}
+
+.catalog-sort {
+  flex-shrink: 0;
+  height: 48rpx;
+  padding: 0 16rpx;
+  border-radius: 999rpx;
+  background: rgba(37, 42, 36, 0.06);
+  color: var(--jade);
+  font-size: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .catalog-jump {

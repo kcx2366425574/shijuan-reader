@@ -13,7 +13,8 @@ import {
   parseDocument,
   groupSearchResults,
   proxiedUrl,
-  extractWafToken
+  extractWafToken,
+  getChapterContent
 } from '../src/core/service.js'
 import { BUILTIN_SOURCES } from '../src/core/builtin-sources.js'
 
@@ -227,4 +228,50 @@ test('聚合结果按搜索相关性排序', () => {
   ], '三体')
   assert.equal(groups[0].name, '三体')
   assert.ok(['寿衣店的营业员', '人体诡话系列'].includes(groups[1].name))
+})
+
+test('聚热文学 base64 正文分页逐页解码拼接且不串到下一章', async () => {
+  const source = BUILTIN_SOURCES.find((item) => item.id === 'builtin-jurewx')
+  assert.ok(source.ruleContent.nextContentUrl, '聚热文学必须配置正文分页规则')
+
+  // 用内置书源的真实规则验证：分页地址来自 hhekgsv 变量，_N.html 为同章分页。
+  const encodeText = (text) => Buffer.from(`<p>${text}</p>`, 'utf8').toString('base64')
+  const makePage = (title, text, nextPath) => `<!doctype html><html><body>
+    <h1 id="chaptername">${title}</h1>
+    <div class="txt" id="txt"><p>请退出浏览器阅读模式。</p>
+      <script>document.writeln(sxptdfwr.lbnxvja('${encodeText(text)}'));</script>
+    </div>
+    <script type="text/javascript">var hhekgsv='${nextPath}';var lkldeh='/chapter.html';</script>
+  </body></html>`
+
+  const firstText = '第一页正文：山色空蒙雨亦奇。'
+  const secondText = '第二页正文：孤帆远影碧空尽。'
+  const nextChapterText = '下一章正文：不应被拼接。'
+  const firstUrl = 'https://www.jurewx.com/chapter/1.html'
+  const secondUrl = 'https://www.jurewx.com/chapter/1_2.html'
+  const pages = {
+    [firstUrl]: makePage('第1页', firstText, '/chapter/1_2.html'),
+    [secondUrl]: makePage('第2页', secondText, '/chapter/2.html'),
+    'https://www.jurewx.com/chapter/2.html': makePage('下一章', nextChapterText, '')
+  }
+
+  const originalFetch = globalThis.fetch
+  const fetched = []
+  globalThis.fetch = async (url) => {
+    const target = String(url)
+    fetched.push(target)
+    const html = pages[target]
+    if (!html) return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } })
+    return new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+  }
+  try {
+    const result = await getChapterContent(source, { name: '第1页', url: firstUrl })
+    assert.ok(result.content.includes(firstText), '首页正文应被解码')
+    assert.ok(result.content.includes(secondText), '第二页正文应被解码并拼接')
+    assert.ok(!result.content.includes(nextChapterText), '不得串到下一章')
+    assert.ok(!result.content.includes('document.writeln'), '不应残留脚本源码')
+    assert.deepEqual(fetched, [firstUrl, secondUrl], '只抓取同章分页，不抓下一章')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
