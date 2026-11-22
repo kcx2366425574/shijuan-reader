@@ -296,6 +296,7 @@ const MAX_CACHE = 60
 
 export function clearHttpCache() {
   responseCache.clear()
+  wafTokenCache.clear()
   indexSearchCache.clear()
 }
 
@@ -326,6 +327,20 @@ function looksBlocked(text) {
   return false
 }
 
+/* ------------------------------------------------------------------ *
+ * WAF 挑战处理（旧式 waf_challenge + 新版 waf_v2）
+ *
+ * 站点实际返回的 503 挑战形如：
+ *   document.cookie='waf_challenge=<token>; max-age=300; path=/; ...'
+ * 旧实现只匹配 waf_challenge='<token>'，无法识别上面的真实格式，
+ * 导致 503 后不重试、整本缓存全失败。这里统一解析并支持自动求解。
+ * ------------------------------------------------------------------ */
+
+const WAF_MAX_RETRIES = 2
+const WAF_CACHE_TTL = 4 * 60 * 1000
+const WAF_SOLVE_TIMEOUT = 4000
+const WAF_MAX_NONCE = 2000000
+
 const wafTokenCache = new Map()
 
 function wafHostKey(url) {
@@ -333,22 +348,360 @@ function wafHostKey(url) {
   return match ? match[1].toLowerCase() : ''
 }
 
-export function extractWafToken(text) {
-  const sample = String(text || '')
-  const match = sample.match(/var\s+token\s*=\s*['"]([^'"]+)['"]/i) ||
-    sample.match(/waf_challenge\s*=\s*['"]([^'"]+)['"]/i)
-  return match ? match[1] : ''
+function utf8Bytes(text) {
+  const value = String(text == null ? '' : text)
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(value)
+  const bytes = []
+  for (let i = 0; i < value.length; i++) {
+    let code = value.charCodeAt(i)
+    if (code < 0x80) {
+      bytes.push(code)
+    } else if (code < 0x800) {
+      bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+    } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+      const next = value.charCodeAt(i + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00)
+        i++
+        bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+      } else {
+        bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+      }
+    } else {
+      bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    }
+  }
+  return Uint8Array.from(bytes)
 }
 
-function setWafCookie(baseUrl, token) {
+function hex32(value) {
+  return (value >>> 0).toString(16).padStart(8, '0')
+}
+
+// MD5 摘要按小端序输出每个 32 位字，SHA-1/SHA-256 按大端序。
+function hex32le(value) {
+  const word = value >>> 0
+  const byte = (n) => (n & 0xff).toString(16).padStart(2, '0')
+  return byte(word) + byte(word >>> 8) + byte(word >>> 16) + byte(word >>> 24)
+}
+
+const MD5_K = (() => {
+  const table = new Uint32Array(64)
+  for (let i = 0; i < 64; i++) table[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0
+  return table
+})()
+const MD5_S = [
+  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+  5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21
+]
+
+function md5Hex(input) {
+  const bytes = utf8Bytes(input)
+  const bitLength = bytes.length * 8
+  const padded = new Uint8Array((((bytes.length + 8) >> 6) + 1) * 64)
+  padded.set(bytes)
+  padded[bytes.length] = 0x80
+  const view = new DataView(padded.buffer)
+  view.setUint32(padded.length - 8, bitLength >>> 0, true)
+  view.setUint32(padded.length - 4, Math.floor(bitLength / 4294967296), true)
+  let a0 = 0x67452301
+  let b0 = 0xefcdab89
+  let c0 = 0x98badcfe
+  let d0 = 0x10325476
+  const words = new Uint32Array(16)
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    for (let i = 0; i < 16; i++) words[i] = view.getUint32(offset + i * 4, true)
+    let a = a0; let b = b0; let c = c0; let d = d0
+    for (let i = 0; i < 64; i++) {
+      let f = 0
+      let g = 0
+      if (i < 16) {
+        f = (b & c) | (~b & d); g = i
+      } else if (i < 32) {
+        f = (d & b) | (~d & c); g = (5 * i + 1) % 16
+      } else if (i < 48) {
+        f = b ^ c ^ d; g = (3 * i + 5) % 16
+      } else {
+        f = c ^ (b | ~d); g = (7 * i) % 16
+      }
+      const sum = (a + f + MD5_K[i] + words[g]) >>> 0
+      a = d; d = c; c = b
+      b = (b + ((sum << MD5_S[i]) | (sum >>> (32 - MD5_S[i])))) >>> 0
+    }
+    a0 = (a0 + a) >>> 0; b0 = (b0 + b) >>> 0; c0 = (c0 + c) >>> 0; d0 = (d0 + d) >>> 0
+  }
+  return hex32le(a0) + hex32le(b0) + hex32le(c0) + hex32le(d0)
+}
+
+const SHA256_K = [
+  1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221,
+  3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580,
+  3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
+  2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895,
+  666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037,
+  2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344,
+  430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779,
+  1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298
+]
+
+function rotr32(value, bits) {
+  return (value >>> bits) | (value << (32 - bits))
+}
+
+function sha256Hex(input) {
+  const bytes = utf8Bytes(input)
+  const bitLength = bytes.length * 8
+  const padded = new Uint8Array((((bytes.length + 8) >> 6) + 1) * 64)
+  padded.set(bytes)
+  padded[bytes.length] = 0x80
+  const view = new DataView(padded.buffer)
+  view.setUint32(padded.length - 8, Math.floor(bitLength / 4294967296), false)
+  view.setUint32(padded.length - 4, bitLength >>> 0, false)
+  const h = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  ]
+  const words = new Uint32Array(64)
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    for (let i = 0; i < 16; i++) words[i] = view.getUint32(offset + i * 4, false)
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr32(words[i - 15], 7) ^ rotr32(words[i - 15], 18) ^ (words[i - 15] >>> 3)
+      const s1 = rotr32(words[i - 2], 17) ^ rotr32(words[i - 2], 19) ^ (words[i - 2] >>> 10)
+      words[i] = (words[i - 16] + s0 + words[i - 7] + s1) >>> 0
+    }
+    let a = h[0]; let b = h[1]; let c = h[2]; let d = h[3]
+    let e = h[4]; let f = h[5]; let g = h[6]; let hh = h[7]
+    for (let i = 0; i < 64; i++) {
+      const bigSigma1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
+      const choose = (e & f) ^ (~e & g)
+      const t1 = (hh + bigSigma1 + choose + SHA256_K[i] + words[i]) >>> 0
+      const bigSigma0 = rotr32(a, 2) ^ rotr32(a, 13) ^ rotr32(a, 22)
+      const majority = (a & b) ^ (a & c) ^ (b & c)
+      const t2 = (bigSigma0 + majority) >>> 0
+      hh = g; g = f; f = e; e = (d + t1) >>> 0
+      d = c; c = b; b = a; a = (t1 + t2) >>> 0
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0
+    h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0
+    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0
+    h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0
+  }
+  return h.map(hex32).join('')
+}
+
+function sha1Hex(input) {
+  const bytes = utf8Bytes(input)
+  const bitLength = bytes.length * 8
+  const padded = new Uint8Array((((bytes.length + 8) >> 6) + 1) * 64)
+  padded.set(bytes)
+  padded[bytes.length] = 0x80
+  const view = new DataView(padded.buffer)
+  view.setUint32(padded.length - 8, Math.floor(bitLength / 4294967296), false)
+  view.setUint32(padded.length - 4, bitLength >>> 0, false)
+  const h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+  const words = new Uint32Array(80)
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    for (let i = 0; i < 16; i++) words[i] = view.getUint32(offset + i * 4, false)
+    for (let i = 16; i < 80; i++) {
+      words[i] = rotr32(words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16], 31)
+    }
+    let a = h[0]; let b = h[1]; let c = h[2]; let d = h[3]; let e = h[4]
+    for (let i = 0; i < 80; i++) {
+      let f = 0
+      let k = 0
+      if (i < 20) {
+        f = (b & c) | (~b & d); k = 0x5a827999
+      } else if (i < 40) {
+        f = b ^ c ^ d; k = 0x6ed9eba1
+      } else if (i < 60) {
+        f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc
+      } else {
+        f = b ^ c ^ d; k = 0xca62c1d6
+      }
+      const temp = (rotr32(a, 27) + f + e + k + words[i]) >>> 0
+      e = d; d = c; c = rotr32(b, 2); b = a; a = temp
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0
+    h[3] = (h[3] + d) >>> 0; h[4] = (h[4] + e) >>> 0
+  }
+  return h.map(hex32).join('')
+}
+
+function hashHex(algorithm, text) {
+  if (algorithm === 'md5') return md5Hex(text)
+  if (algorithm === 'sha1') return sha1Hex(text)
+  return sha256Hex(text)
+}
+
+/**
+ * 兼容旧式挑战页：var token='xxx' / waf_challenge='xxx' /
+ * document.cookie='waf_challenge=xxx; max-age=300; ...'
+ */
+function isPlausibleWafToken(value) {
+  return /^[A-Za-z0-9_+=/-]{8,}$/.test(String(value || ''))
+}
+
+export function extractWafToken(text) {
+  const sample = String(text || '')
+  const direct = sample.match(/var\s+token\s*=\s*['"]([^'"]+)['"]/i)
+  if (direct && isPlausibleWafToken(direct[1])) return direct[1]
+  // 真实挑战页把 token 直接写进 document.cookie 字符串，须先于普通赋值匹配，
+  // 否则会误命中后面的 document.cookie.indexOf('waf_challenge=') 判断。
+  const patterns = [
+    /document\.cookie\s*=\s*['"][^'"]*\bwaf_challenge=([^;'"\s]+)/i,
+    /['"]\s*waf_challenge\s*=\s*([^;'"\s]+)/i,
+    /\bwaf_challenge\s*=\s*['"]([^'"]+)['"]/i,
+    /\bwaf_challenge\s*=\s*([A-Za-z0-9_.\-]{8,})/i
+  ]
+  for (const pattern of patterns) {
+    const match = sample.match(pattern)
+    if (match && isPlausibleWafToken(match[1]) && !/^(token|t|s)$/i.test(match[1])) return match[1]
+  }
+  // document.cookie='waf_challenge='+t 形式：回溯 t 的定义
+  const concat = sample.match(/waf_challenge\s*=\s*['"]\s*\+\s*([A-Za-z_$][\w$]*)/i)
+  if (concat) {
+    const value = sample.match(new RegExp('(?:var|let|const)\\s+' + concat[1] + "\\s*=\\s*['\"]([^'\"]+)['\"]", 'i'))
+    if (value && isPlausibleWafToken(value[1])) return value[1]
+  }
+  return ''
+}
+
+/** 解析 503 挑战页，返回挑战类型与求解所需参数。 */
+export function parseWafChallenge(text) {
+  const sample = String(text || '')
+  if (!sample || sample.length > 50000) return null
+  const isV2 = /\bwaf_v2\b/i.test(sample)
+  const legacyToken = extractWafToken(sample)
+  if (!isV2 && !legacyToken) return null
+  const challenge = {
+    type: isV2 ? 'v2' : 'legacy',
+    token: legacyToken,
+    seed: '',
+    count: 0,
+    difficulty: 0,
+    algorithm: 'sha256',
+    cookieName: 'waf_v2',
+    mode: 'chain',
+    embedded: ''
+  }
+  if (!isV2) return challenge
+
+  const embedded = sample.match(/document\.cookie\s*=\s*['"][^'"]*\bwaf_v2=([^;'"\s]+)/i)
+  if (embedded) challenge.embedded = embedded[1]
+  const cookieName = sample.match(/document\.cookie\s*=\s*['"]([A-Za-z_][\w-]*)=/i)
+  if (cookieName && /waf/i.test(cookieName[1])) challenge.cookieName = cookieName[1]
+
+  const cString = sample.match(/(?:var|let|const)?\s*\bc\s*=\s*['"]([^'"]+)['"]/i)
+  const cNumber = sample.match(/(?:var|let|const)?\s*\bc\s*=\s*(\d{1,7})\b/i) || sample.match(/[?&]c=(\d{1,7})\b/i)
+  if (cNumber) challenge.count = Number(cNumber[1])
+  if (cString) challenge.seed = cString[1]
+
+  const seedNames = ['seed', 'challenge', 'salt', 'token', 'nonce', 'ch', 't', 's', 'v']
+  for (const name of seedNames) {
+    const found = sample.match(new RegExp('(?:var|let|const)?\\s*\\b' + name + "\\s*=\\s*['\"]([^'\"]{1,})['\"]", 'i'))
+    if (found && found[1] !== challenge.seed) {
+      challenge.seed = found[1]
+      break
+    }
+  }
+  const difficulty = sample.match(/\b(?:difficulty|diff|zeros|bits|d)\s*[:=]\s*['"]?(\d{1,3})['"]?/i)
+  if (difficulty) challenge.difficulty = Math.min(Number(difficulty[1]), 8)
+  if (!challenge.difficulty) {
+    const target = sample.match(/['"](0{2,8})['"]/)
+    if (target) challenge.difficulty = target[1].length
+  }
+  if (challenge.difficulty > 0) challenge.mode = 'cash'
+  if (/md5/i.test(sample)) challenge.algorithm = 'md5'
+  else if (/\bsha[-_ ]?1\b/i.test(sample)) challenge.algorithm = 'sha1'
+  if (!challenge.seed && !challenge.count && !challenge.difficulty && !challenge.embedded) return null
+  return challenge
+}
+
+async function solveHashcash(seed, challenge) {
+  const target = '0'.repeat(challenge.difficulty)
+  const started = Date.now()
+  for (let nonce = 0; nonce < WAF_MAX_NONCE; nonce++) {
+    const hash = hashHex(challenge.algorithm, seed + nonce)
+    if (hash.slice(0, target.length) === target) return hash + '.' + nonce
+    if ((nonce & 4095) === 0) {
+      if (Date.now() - started > WAF_SOLVE_TIMEOUT) return ''
+      await Promise.resolve()
+    }
+  }
+  return ''
+}
+
+/**
+ * 求解 WAF 挑战并返回待写入的 cookie 列表。
+ * 不依赖 Web Crypto，纯标准 JS，可在 App 的 WebView / plus 环境同步运行。
+ */
+export async function solveWafChallenge(text, options = {}) {
+  const challenge = parseWafChallenge(text)
+  if (!challenge) return null
+  if (challenge.type === 'legacy') {
+    if (!challenge.token) return null
+    return { name: 'waf_challenge', value: challenge.token, cookies: ['waf_challenge=' + challenge.token] }
+  }
+  let value = challenge.embedded
+  if (!value) {
+    const seed = challenge.seed || String(options.url || '')
+    if (!seed) return null
+    if (challenge.mode === 'cash') {
+      value = await solveHashcash(seed, challenge)
+    } else {
+      const count = Math.min(Math.max(challenge.count || 1, 1), 4096)
+      value = seed
+      for (let i = 0; i < count; i++) value = hashHex(challenge.algorithm, value)
+    }
+  }
+  if (!value) return null
+  return { name: challenge.cookieName, value, cookies: [challenge.cookieName + '=' + value] }
+}
+
+function mergeCookieHeader(current, cookies) {
+  const map = new Map()
+  String(current || '').split(';').forEach((part) => {
+    const index = part.indexOf('=')
+    if (index > 0) map.set(part.slice(0, index).trim(), part.slice(index + 1).trim())
+  })
+  for (const cookie of cookies || []) {
+    const index = cookie.indexOf('=')
+    if (index > 0) map.set(cookie.slice(0, index).trim(), cookie.slice(index + 1).trim())
+  }
+  return Array.from(map, ([key, value]) => key + '=' + value).join('; ')
+}
+
+function getWafCookieHeader(host) {
+  const item = wafTokenCache.get(host)
+  if (!item) return ''
+  if (Date.now() > item.expire) {
+    wafTokenCache.delete(host)
+    return ''
+  }
+  return item.cookies
+}
+
+function rememberWafCookies(host, cookies) {
+  if (!host) return
+  const header = mergeCookieHeader(getWafCookieHeader(host), cookies)
+  wafTokenCache.set(host, { cookies: header, expire: Date.now() + WAF_CACHE_TTL })
+}
+
+function setWafCookies(baseUrl, cookies) {
   if (!hasNativeXhr()) return false
   if (typeof plus === 'undefined' || !plus.navigator || typeof plus.navigator.setCookie !== 'function') return false
-  try {
-    plus.navigator.setCookie(baseUrl, 'waf_challenge=' + token + '; path=/')
-    return true
-  } catch (e) {
-    return false
+  let written = false
+  for (const cookie of cookies || []) {
+    try {
+      plus.navigator.setCookie(baseUrl, cookie + '; path=/')
+      written = true
+    } catch (e) {
+      // 个别 WebView 禁止写 cookie，忽略并依赖显式 Cookie 请求头
+    }
   }
+  return written
 }
 
 function decodeScriptedContent(html, source, title) {
@@ -397,10 +750,8 @@ export async function fetchText(url, options = {}) {
   }
 
   const useNative = hasNativeXhr() && !isH5Runtime()
-  if (!useNative) {
-    const cached = wafTokenCache.get(wafHostKey(url))
-    if (cached) headers.Cookie = 'waf_challenge=' + cached
-  }
+  const wafHost = wafHostKey(url)
+  let wafCookieHeader = useNative ? '' : getWafCookieHeader(wafHost)
   const requestOnce = async (extraHeaders = {}) => {
     const requestHeaders = Object.assign({}, headers, extraHeaders)
     const response = useNative
@@ -430,18 +781,38 @@ export async function fetchText(url, options = {}) {
     return { response, contentType, text: decoded.text, charset: decoded.charset }
   }
 
-  let { response, contentType, text, charset } = await requestOnce()
-  if (response.status === 503 && !options.wafRetried) {
-    const token = extractWafToken(text)
-    if (token) {
-      wafTokenCache.set(wafHostKey(url), token)
-      const cookieSet = setWafCookie(ensureBase(source), token)
-      const retried = await requestOnce(cookieSet ? {} : { Cookie: 'waf_challenge=' + token })
-      response = retried.response
-      contentType = retried.contentType
-      text = retried.text
-      charset = retried.charset
+  let response = null
+  let contentType = ''
+  let text = ''
+  let charset = ''
+  let wafRetries = 0
+  for (;;) {
+    const extra = wafCookieHeader ? { Cookie: wafCookieHeader } : {}
+    const attempt = await requestOnce(extra)
+    response = attempt.response
+    contentType = attempt.contentType
+    text = attempt.text
+    charset = attempt.charset
+    if (response.status !== 503 || wafRetries >= WAF_MAX_RETRIES) break
+    let solution = null
+    try {
+      solution = await solveWafChallenge(text, { url })
+    } catch (e) {
+      solution = null
     }
+    if (!solution || !solution.cookies.length) break
+    wafRetries += 1
+    wafCookieHeader = mergeCookieHeader(wafCookieHeader, solution.cookies)
+    rememberWafCookies(wafHost, solution.cookies)
+    setWafCookies(ensureBase(source), solution.cookies)
+  }
+  if (response.status === 503 && wafRetries > 0) {
+    throw new RequestError(`WAF 挑战求解失败：重试 ${wafRetries} 次后仍返回 HTTP 503`, {
+      url,
+      status: response.status,
+      stage: options.stage,
+      sourceName: source.name
+    })
   }
   if (response.status >= 400) {
     throw new RequestError(`网站返回 HTTP ${response.status}`, {
