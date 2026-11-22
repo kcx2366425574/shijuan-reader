@@ -169,6 +169,7 @@
         >
           <text class="catalog-index">{{ pad2(chapter.index + 1) }}</text>
           <text class="catalog-name ellipsis">{{ chapter.name }}</text>
+          <text v-if="cachedUrls.has(chapter.url)" class="catalog-cached">已缓存</text>
           <text v-if="chapter.index === currentIndex" class="catalog-current">正在读</text>
         </view>
       </view>
@@ -300,7 +301,8 @@ import {
   saveSettings
 } from '../../core/store.js'
 import { getCachedBook, cacheBook } from '../../core/book-cache.js'
-import { getOfflineBook, getOfflineChapter } from '../../core/offline.js'
+import { getOfflineBook, getOfflineChapter, buildCachedUrlSet, appendOfflineChapters } from '../../core/offline.js'
+import { createAutoCacheScheduler } from '../../core/auto-cache.js'
 import { downloadBook, cancelBookDownload, getDownloadState } from '../../core/download.js'
 import { openBook, getChapterContent } from '../../core/service.js'
 import { READER_THEMES, THEME_LIST, getTheme } from '../../core/theme.js'
@@ -331,6 +333,7 @@ const catalogPage = ref(0)
 const catalogTargetIndex = ref(-1)
 const catalogScrollIntoView = ref('')
 const catalogJump = ref('')
+const cachedUrls = ref(new Set())
 const scrollTopValue = ref(0)
 const trackedScrollTop = ref(0)
 const scrollKey = ref(0)
@@ -487,6 +490,56 @@ function ensureShelfEntry() {
   })
 }
 
+/** 目录「已缓存」标记：进入页面/整本缓存完成后重建 URL 集合。 */
+async function refreshCachedUrls() {
+  if (!book.value.id) return
+  try {
+    const offline = await getOfflineBook(book.value.id)
+    cachedUrls.value = buildCachedUrlSet(offline && offline.contents)
+  } catch (e) {
+    // 读不到离线数据不影响阅读，仅不显示标记
+  }
+}
+
+/**
+ * 在线加载成功后的自动缓存：1.2 秒防抖窗口内只写一次离线文件。
+ * 写入由 offline.js 的批量 API 串行化并按 url 去重，失败不阻塞阅读。
+ */
+const autoCache = createAutoCacheScheduler(async (entries) => {
+  const base = {
+    bookId: book.value.id,
+    info: book.value,
+    chapters: chapters.value,
+    bookUrl: book.value.bookUrl,
+    tocUrl: book.value.tocUrl,
+    sourceId: source.value ? source.value.id : '',
+    sourceName: source.value ? source.value.name : ''
+  }
+  try {
+    const payload = await appendOfflineChapters({ ...base, entries })
+    if (payload) {
+      const next = new Set(cachedUrls.value)
+      for (const entry of entries) next.add(entry.chapter.url)
+      cachedUrls.value = next
+    }
+  } catch (e) {
+    // 自动缓存失败不阻塞在线阅读
+  }
+}, 1200)
+
+function scheduleAutoCache(chapter, result) {
+  if (!book.value.id || !chapter || !chapter.url || !result || !result.content) return
+  autoCache.schedule({
+    chapter: { url: chapter.url, name: chapter.name },
+    content: result.content,
+    title: result.title || chapter.name
+  })
+}
+
+function flushAutoCache() {
+  return autoCache.flush()
+}
+
 async function loadChapter(index, options = {}) {
   if (index < 0 || index >= chapters.value.length) {
     toast(index < 0 ? '已经是第一章' : '已经是最后一章')
@@ -524,6 +577,7 @@ async function loadChapter(index, options = {}) {
       if (!source.value) throw new Error('该章尚未缓存，且当前没有可用的书源')
       result = await getChapterContent(source.value, chapter, { bookUrl: book.value.bookUrl })
       chapterContentCache.set(chapter.url, result)
+      scheduleAutoCache(chapter, result)
       if (chapterContentCache.size > 30) {
         const first = chapterContentCache.keys().next().value
         chapterContentCache.delete(first)
@@ -608,6 +662,7 @@ async function init() {
   const sources = ensureSources()
   source.value = sources.find((item) => item.id === sourceId) || null
   const offlineBook = bookId ? await getOfflineBook(bookId) : null
+  cachedUrls.value = buildCachedUrlSet(offlineBook && offlineBook.contents)
   if (!source.value && !offlineBook) {
     loadingBook.value = false
     fatalError.value = '找不到这本书的书源，可能已被删除。'
@@ -912,6 +967,7 @@ function startCache(startIndex, endIndex, tip) {
   }).then((state) => {
     cachePercent.value = null
     stopCachePolling()
+    refreshCachedUrls()
     if (state.status === 'done') toast('全书已缓存，可离线阅读')
     else if (state.status === 'cancelled') toast('已取消缓存')
     else toast(`本次已缓存 ${state.done}/${state.total} 章`)
@@ -975,10 +1031,14 @@ onLoad((options) => {
   init()
 })
 
-onHide(() => saveProgress(true))
+onHide(() => {
+  saveProgress(true)
+  flushAutoCache()
+})
 
 onUnload(() => {
   saveProgress(true)
+  flushAutoCache()
   if (hideTimer) clearTimeout(hideTimer)
   if (saveTimer) clearTimeout(saveTimer)
   if (autoNextTimer) clearTimeout(autoNextTimer)
@@ -992,6 +1052,7 @@ onBackPress(() => {
 })
 
 onBeforeUnmount(() => {
+  flushAutoCache()
   if (hideTimer) clearTimeout(hideTimer)
   if (saveTimer) clearTimeout(saveTimer)
   if (autoNextTimer) clearTimeout(autoNextTimer)
@@ -1548,6 +1609,19 @@ onBeforeUnmount(() => {
 .catalog-current {
   font-size: 18rpx;
   color: var(--jade);
+  margin-left: 8rpx;
+  flex-shrink: 0;
+}
+
+.catalog-cached {
+  font-size: 16rpx;
+  color: var(--jade);
+  border: 1rpx solid var(--jade);
+  border-radius: 6rpx;
+  padding: 1rpx 7rpx;
+  margin-left: 8rpx;
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .catalog-pager {

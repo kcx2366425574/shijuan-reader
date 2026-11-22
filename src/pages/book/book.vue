@@ -179,6 +179,7 @@
         >
           <text class="catalog-index">{{ pad2(chapter.index + 1) }}</text>
           <text class="catalog-name ellipsis">{{ chapter.name }}</text>
+          <text v-if="cachedUrls.has(chapter.url)" class="catalog-cached">已缓存</text>
           <text v-if="isCurrentChapter(chapter.index)" class="catalog-current">正在读</text>
         </view>
       </view>
@@ -213,7 +214,7 @@ import { takeHandoff } from '../../core/handoff.js'
 import { openBook } from '../../core/service.js'
 import { searchAllSources, groupSearchResults } from '../../core/service.js'
 import { copyText, toast, toastSuccess, pad2, firstReadableIndex, confirmDialog } from '../../utils/format.js'
-import { getOfflineBook, getOfflineMeta, removeOfflineBook } from '../../core/offline.js'
+import { getOfflineBook, getOfflineMeta, removeOfflineBook, buildCachedUrlSet } from '../../core/offline.js'
 import { downloadBook, cancelBookDownload, getDownloadState } from '../../core/download.js'
 
 const params = ref({})
@@ -228,6 +229,7 @@ const introExpanded = ref(false)
 const showCatalog = ref(false)
 const catalogPage = ref(0)
 const catalogJump = ref('')
+const cachedUrls = ref(new Set())
 const settings = ref(loadSettings())
 const switching = ref(false)
 const currentBookId = ref('')
@@ -474,6 +476,7 @@ async function load(force = false) {
   currentBookUrl.value = bookUrl
   alternateOffers.value = Array.isArray(fallback.alternates) ? fallback.alternates : []
   const offlineBook = bookId ? await getOfflineBook(bookId) : null
+  cachedUrls.value = buildCachedUrlSet(offlineBook && offlineBook.contents)
   info.value = {
     ...fallback,
     name: fallback.name || '',
@@ -536,9 +539,20 @@ function stopOfflinePolling() {
   }
 }
 
+async function refreshCachedUrls() {
+  if (!currentBookId.value) return
+  try {
+    const offline = await getOfflineBook(currentBookId.value)
+    cachedUrls.value = buildCachedUrlSet(offline && offline.contents)
+  } catch (e) {
+    // 离线数据不可读时仅隐藏标记
+  }
+}
+
 function refreshOfflineMeta() {
   if (!currentBookId.value) return
   offlineMeta.value = getOfflineMeta(currentBookId.value)
+  refreshCachedUrls()
   const state = getDownloadState(currentBookId.value)
   if (state) {
     downloading.value = true
@@ -561,6 +575,7 @@ function startOfflinePolling() {
     } else {
       downloading.value = false
       offlineMeta.value = getOfflineMeta(currentBookId.value)
+      refreshCachedUrls()
       stopOfflinePolling()
     }
   }, 700)
@@ -1433,6 +1448,19 @@ onUnload(() => {
 .catalog-current {
   font-size: 18rpx;
   color: var(--jade);
+  margin-left: 8rpx;
+  flex-shrink: 0;
+}
+
+.catalog-cached {
+  font-size: 16rpx;
+  color: var(--jade);
+  border: 1rpx solid var(--jade);
+  border-radius: 6rpx;
+  padding: 1rpx 7rpx;
+  margin-left: 8rpx;
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .catalog-pager {

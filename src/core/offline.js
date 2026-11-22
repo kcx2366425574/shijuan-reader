@@ -319,6 +319,117 @@ export async function getOfflineChapter(bookId, chapterUrl) {
   return book.__contentMap.get(chapterUrl) || null
 }
 
+/* ------------------------------------------------------------------ *
+ * 增量追加章节（在线阅读时自动缓存）
+ *
+ * saveOfflineBook 是全量重写，不能每读一章就无脑写一次。这里提供
+ * 批量、按 url 去重的纯函数 + 串行化写入 API，调用方只需在 1~2 秒
+ * 防抖窗口结束后提交一次。
+ * ------------------------------------------------------------------ */
+
+/** 从离线书的 contents 构造已缓存 URL 集合，供目录同步渲染标记。 */
+export function buildCachedUrlSet(contents) {
+  const set = new Set()
+  for (const item of Array.isArray(contents) ? contents : []) {
+    if (item && item.url) set.add(item.url)
+  }
+  return set
+}
+
+/**
+ * 纯函数：把若干章节增量并入离线书 payload。
+ * 不修改入参；按 url 去重（同 url 覆盖）；无离线书时新建一条 complete:false 的记录。
+ */
+export function buildOfflinePayloadWithChapters(existing, input) {
+  const base = input || {}
+  const chapters = Array.isArray(existing && existing.chapters) && existing.chapters.length
+    ? existing.chapters
+    : (Array.isArray(base.chapters) ? base.chapters : [])
+  const contents = Array.isArray(existing && existing.contents) ? existing.contents.slice() : []
+  const byUrl = new Map(contents.map((item) => [item && item.url, item]).filter(([url]) => !!url))
+  let changed = false
+  for (const entry of Array.isArray(base.entries) ? base.entries : []) {
+    const chapter = (entry && entry.chapter) || {}
+    const url = String(chapter.url || '')
+    const content = String((entry && entry.content) || '')
+    if (!url || !content) continue
+    const record = {
+      url,
+      title: String((entry && entry.title) || chapter.name || ''),
+      name: String(chapter.name || ''),
+      content
+    }
+    if (byUrl.has(url)) {
+      const index = contents.findIndex((item) => item && item.url === url)
+      if (index >= 0) contents[index] = record
+      else contents.push(record)
+    } else {
+      contents.push(record)
+      byUrl.set(url, record)
+    }
+    changed = true
+  }
+  if (!changed) return null
+  return {
+    bookId: base.bookId,
+    sourceId: (existing && existing.sourceId) || base.sourceId || '',
+    sourceName: (existing && existing.sourceName) || base.sourceName || '',
+    info: (existing && existing.info) || base.info || {},
+    bookUrl: (existing && existing.bookUrl) || base.bookUrl || '',
+    tocUrl: (existing && existing.tocUrl) || base.tocUrl || '',
+    chapters,
+    contents,
+    // 新书只缓存了零星章节，不能标记为全书完成，避免书架误显示“已缓存全书”。
+    complete: existing ? existing.complete === true : false,
+    chapterCount: (existing && (Number(existing.chapterCount) || chapters.length)) || chapters.length,
+    cachedChapters: contents.length,
+    size: Number(existing && existing.size) || 0
+  }
+}
+
+const appendQueues = new Map()
+
+/**
+ * 批量追加章节。同一 bookId 的调用串行执行，避免“读取-合并-写入”竞态丢章。
+ * 已在离线缓存中的 url 会跳过；全部命中时不做任何写入。
+ * @returns {Promise<object|null>} 写入后的 payload，无需写入时返回 null
+ */
+export async function appendOfflineChapters(input) {
+  const base = input || {}
+  const bookId = String(base.bookId || '')
+  if (!bookId || !Array.isArray(base.entries) || !base.entries.length) return null
+  const previous = appendQueues.get(bookId) || Promise.resolve(null)
+  const task = previous.then(() => doAppendOfflineChapters(base), () => doAppendOfflineChapters(base))
+  appendQueues.set(bookId, task)
+  const done = () => { if (appendQueues.get(bookId) === task) appendQueues.delete(bookId) }
+  task.then(done, done)
+  return task
+}
+
+async function doAppendOfflineChapters(base) {
+  const existing = await getOfflineBook(base.bookId)
+  const cached = buildCachedUrlSet(existing && existing.contents)
+  const fresh = (base.entries || []).filter((entry) => {
+    const chapter = (entry && entry.chapter) || {}
+    const url = String(chapter.url || '')
+    return url && String((entry && entry.content) || '') && !cached.has(url)
+  })
+  if (!fresh.length) return null
+  const payload = buildOfflinePayloadWithChapters(existing, { ...base, entries: fresh })
+  if (!payload) return null
+  try {
+    return await saveOfflineBook(payload)
+  } catch (e) {
+    // 自动缓存失败不能影响在线阅读；保留错误供调用方决定是否提示
+    throw e
+  }
+}
+
+/** 单章便捷入口，复用批量 API。 */
+export function appendOfflineChapter(base, entry) {
+  return appendOfflineChapters({ ...(base || {}), entries: [entry] })
+}
+
 export async function removeOfflineBook(bookId) {
   const meta = getOfflineMeta(bookId)
   memoryBooks.delete(bookId)
